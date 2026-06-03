@@ -46,3 +46,5 @@ runs/
 
 # Claude
 .claude/
+
+models/
