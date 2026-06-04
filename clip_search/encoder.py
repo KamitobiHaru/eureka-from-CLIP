@@ -1,4 +1,5 @@
 import os
+from PIL import Image
 import numpy as np
 import torch
 import open_clip
@@ -49,7 +50,7 @@ class CLIPEncoder:
         if not frames:
             return np.zeros(512, dtype=np.float32)
 
-        images = torch.stack([self.preprocess(f) for f in frames]).to(self.device)
+        images = torch.stack([self.preprocess(Image.fromarray(f)) for f in frames]).to(self.device)
         emb = self.model.encode_image(images)  # (N, 512)
         emb = emb.mean(dim=0, keepdim=True)     # (1, 512)
         emb = emb / emb.norm(dim=-1, keepdim=True)

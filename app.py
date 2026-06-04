@@ -133,4 +133,4 @@ if __name__ == "__main__":
         return start
 
     port = find_free_port(7860)
-    demo.launch(server_name="0.0.0.0", server_port=port, theme=gr.themes.Soft())
+    demo.launch(server_name="0.0.0.0", server_port=port, theme=gr.themes.Soft(), share=True)
