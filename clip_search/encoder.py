@@ -57,6 +57,16 @@ class CLIPEncoder:
         return emb.cpu().numpy().flatten().astype(np.float32)
 
     @torch.no_grad()
+    def encode_images(self, images: list) -> np.ndarray:
+        """Encode a list of PIL Images into (N, 512) L2-normalized embeddings."""
+        if not images:
+            return np.zeros((0, 512), dtype=np.float32)
+        imgs = torch.stack([self.preprocess(img) for img in images]).to(self.device)
+        embs = self.model.encode_image(imgs)  # (N, 512)
+        embs = embs / embs.norm(dim=-1, keepdim=True)
+        return embs.cpu().numpy().astype(np.float32)
+
+    @torch.no_grad()
     def encode_text(self, text: str) -> np.ndarray:
         """Encode a text query into a 512-dim normalized embedding."""
         tokens = self.tokenizer([text]).to(self.device)

@@ -1,4 +1,4 @@
-from typing import List, Dict
+from typing import Callable, List, Dict, Optional
 
 import numpy as np
 
@@ -9,8 +9,10 @@ from .encoder import CLIPEncoder
 class SearchEngine:
     """Orchestrator: segment video → encode scenes → rank by text query similarity."""
 
-    def __init__(self, clip_encoder: CLIPEncoder = None):
+    def __init__(self, clip_encoder: CLIPEncoder = None,
+                 text_encoder: Optional[Callable[[str], np.ndarray]] = None):
         self.encoder = clip_encoder or CLIPEncoder()
+        self.text_encoder = text_encoder  # callable(str) -> 512-dim L2-normalized embedding
         self.scenes: List[Scene] = []
         self.scene_embs: np.ndarray = None  # (N, 512)
 
@@ -40,7 +42,11 @@ class SearchEngine:
         if not self.scenes or self.scene_embs is None:
             return []
 
-        query_emb = self.encoder.encode_text(query)  # (512,)
+        if self.text_encoder is not None:
+            query_emb = self.text_encoder(query)  # (512,)
+        else:
+            query_emb = self.encoder.encode_text(query)  # (512,)
+
         scores = self.scene_embs @ query_emb  # (N,) cosine similarity (L2-normed)
 
         top_indices = np.argsort(scores)[::-1][:top_k]

@@ -1,0 +1,25 @@
+data:
+  # Root directory containing train2017/, val2017/, annotations/
+  coco_root: /run/media/occccce/新加卷/exactlyCOC
+  # Relative path from coco_root to the annotation files
+  annotations_dir: annotations_trainval2017/annotations
+  # Directory to store precomputed CLIP vision embeddings
+  embedding_cache: ./data/coco/clip_embeddings
+
+model:
+  bert_model_path: ./models/bert-base-uncased
+  embed_dim: 512
+
+training:
+  batch_size: 64
+  epochs: 20
+  lr: 0.00005
+  weight_decay: 0.02
+  temperature: 0.07
+  warmup_steps: 1000
+  max_grad_norm: 1.0
+  amp: true
+  log_interval: 10
+  eval_interval: 200
+  num_workers: 4
+  checkpoint_dir: ./checkpoints
