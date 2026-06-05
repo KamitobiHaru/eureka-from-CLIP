@@ -36,44 +36,40 @@ class Trainer:
 
         ckpt_dir = cfg["training"]["checkpoint_dir"]
         os.makedirs(ckpt_dir, exist_ok=True)
+        self.global_step = 0
 
-    def train_epoch(self) -> float:
+    def train_batch(self, image_emb, input_ids, attention_mask) -> float:
+        """Single training step. Returns loss."""
         self.model.train()
-        total_loss = 0.0
-        pbar = tqdm(self.train_loader, desc="Train", leave=False)
+        image_emb = image_emb.to(self.device)
+        input_ids = input_ids.to(self.device)
+        attention_mask = attention_mask.to(self.device)
 
-        for image_emb, input_ids, attention_mask in pbar:
-            image_emb = image_emb.to(self.device)
-            input_ids = input_ids.to(self.device)
-            attention_mask = attention_mask.to(self.device)
-
-            if self.scaler:
-                with torch.amp.autocast("cuda"):
-                    text_emb = self.model(input_ids, attention_mask)
-                    loss = self.loss_fn(image_emb, text_emb)
-                self.scaler.scale(loss).backward()
-                self.scaler.unscale_(self.optimizer)
-                torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(), self.cfg["training"]["max_grad_norm"]
-                )
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-            else:
+        if self.scaler:
+            with torch.amp.autocast("cuda"):
                 text_emb = self.model(input_ids, attention_mask)
                 loss = self.loss_fn(image_emb, text_emb)
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(), self.cfg["training"]["max_grad_norm"]
-                )
-                self.optimizer.step()
+            self.scaler.scale(loss).backward()
+            self.scaler.unscale_(self.optimizer)
+            torch.nn.utils.clip_grad_norm_(
+                self.model.parameters(), self.cfg["training"]["max_grad_norm"]
+            )
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+        else:
+            text_emb = self.model(input_ids, attention_mask)
+            loss = self.loss_fn(image_emb, text_emb)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(
+                self.model.parameters(), self.cfg["training"]["max_grad_norm"]
+            )
+            self.optimizer.step()
 
-            self.optimizer.zero_grad()
-            self.scheduler.step()
+        self.optimizer.zero_grad()
+        self.scheduler.step()
+        self.global_step += 1
 
-            total_loss += loss.item()
-            pbar.set_postfix(loss=f"{loss.item():.4f}")
-
-        return total_loss / len(self.train_loader)
+        return loss.item()
 
     @torch.no_grad()
     def evaluate(self) -> float:
@@ -97,10 +93,27 @@ class Trainer:
             self.cfg["training"]["checkpoint_dir"],
             f"bert_epoch{epoch:02d}_val{val_loss:.4f}.pt",
         )
-        torch.save({
+        state = {
             "epoch": epoch,
+            "global_step": self.global_step,
             "model_state_dict": self.model.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
+            "scheduler_state_dict": self.scheduler.state_dict(),
             "val_loss": val_loss,
-        }, path)
+        }
+        if self.scaler:
+            state["scaler_state_dict"] = self.scaler.state_dict()
+        torch.save(state, path)
         return path
+
+    def load_checkpoint(self, path: str):
+        """Load checkpoint and restore model, optimizer, scheduler, and scaler states."""
+        ckpt = torch.load(path, map_location=self.device, weights_only=True)
+        self.model.load_state_dict(ckpt["model_state_dict"])
+        self.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        if "scheduler_state_dict" in ckpt:
+            self.scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+        if self.scaler and "scaler_state_dict" in ckpt:
+            self.scaler.load_state_dict(ckpt["scaler_state_dict"])
+        self.global_step = ckpt.get("global_step", 0)
+        return ckpt["epoch"], ckpt["val_loss"]

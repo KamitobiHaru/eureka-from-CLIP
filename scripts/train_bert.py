@@ -10,12 +10,14 @@ Prerequisites:
 """
 
 import argparse
+import math
 import os
 import sys
 from pathlib import Path
 
 import torch
 import yaml
+from tqdm import tqdm
 from transformers import BertTokenizer
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -27,6 +29,10 @@ from src.training import SymmetricInfoNCE, Trainer
 def main():
     parser = argparse.ArgumentParser(description="Train BERT alignment with CLIP.")
     parser.add_argument("--config", default="config/default.yaml")
+    parser.add_argument("--resume", default=None,
+                        help="Resume from a checkpoint .pt file (e.g. checkpoints/bert_best.pt)")
+    parser.add_argument("--checkpoint_dir", default=None,
+                        help="Override checkpoint directory (default: from config)")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -91,26 +97,67 @@ def main():
     loss_fn = SymmetricInfoNCE(temperature=cfg["training"]["temperature"])
 
     # ── Trainer ──────────────────────────────────────────────
+    if args.checkpoint_dir:
+        cfg["training"]["checkpoint_dir"] = args.checkpoint_dir
     trainer = Trainer(model, train_loader, val_loader, optimizer, loss_fn, cfg)
 
-    # ── Training Loop ────────────────────────────────────────
+    # ── Resume ───────────────────────────────────────────────
+    start_epoch = 1
+    best_val_loss = math.inf
+    if args.resume:
+        print(f"Resuming from checkpoint: {args.resume}")
+        resumed_epoch, resumed_val_loss = trainer.load_checkpoint(args.resume)
+        start_epoch = resumed_epoch + 1
+        best_val_loss = resumed_val_loss
+        print(f"  Resumed at epoch {resumed_epoch} (val_loss={resumed_val_loss:.4f})")
+
+    # ── Training Loop (batch-level) ──────────────────────────
     epochs = cfg["training"]["epochs"]
-    print(f"\nTraining for {epochs} epochs...")
+    eval_interval = cfg["training"]["eval_interval"]
+    total_steps = len(train_loader) * epochs
+    warmup = cfg["training"]["warmup_steps"]
+
+    print(f"\nTraining: {epochs} epochs, {eval_interval} steps/val, "
+          f"{warmup} warmup steps, cosine decay")
     print("-" * 60)
 
-    for epoch in range(1, epochs + 1):
-        train_loss = trainer.train_epoch()
+    global_step = trainer.global_step
+    for epoch in range(start_epoch, epochs + 1):
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch:02d}/{epochs}", leave=False)
+        for batch in pbar:
+            loss = trainer.train_batch(*batch)
+            global_step += 1
+            pbar.set_postfix(loss=f"{loss:.4f}")
+
+            # ── Validation ───────────────────────────────────
+            if global_step % eval_interval == 0:
+                val_loss = trainer.evaluate()
+                lr = trainer.optimizer.param_groups[0]["lr"]
+                print(f"  Step {global_step:>6}/{total_steps}  |  "
+                      f"Train loss: {loss:.4f}  |  "
+                      f"Val loss:   {val_loss:.4f}  |  "
+                      f"LR: {lr:.2e}")
+
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    ckpt_path = trainer.save_checkpoint(epoch, val_loss)
+                    print(f"  ★ New best! Checkpoint saved: {ckpt_path}")
+
+        # ── End-of-epoch validation ──────────────────────────
         val_loss = trainer.evaluate()
+        lr = trainer.optimizer.param_groups[0]["lr"]
+        print(f"  Epoch {epoch:02d}/{epochs} done  |  "
+              f"Val loss: {val_loss:.4f}  |  "
+              f"Best: {best_val_loss:.4f}  |  LR: {lr:.2e}")
 
-        print(f"Epoch {epoch:02d}/{epochs}  |  "
-              f"Train loss: {train_loss:.4f}  |  "
-              f"Val loss:   {val_loss:.4f}")
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            ckpt_path = trainer.save_checkpoint(epoch, val_loss)
+            print(f"  ★ New best! Checkpoint saved: {ckpt_path}")
 
-        ckpt_path = trainer.save_checkpoint(epoch, val_loss)
-        print(f"  Checkpoint saved: {ckpt_path}")
         print("-" * 60)
 
-    print("Training complete.")
+    print(f"Training complete. Best val_loss: {best_val_loss:.4f}")
 
 
 if __name__ == "__main__":
