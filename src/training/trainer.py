@@ -100,6 +100,7 @@ class Trainer:
             "optimizer_state_dict": self.optimizer.state_dict(),
             "scheduler_state_dict": self.scheduler.state_dict(),
             "val_loss": val_loss,
+            "lora_config": getattr(self.model, "lora_config", None),
         }
         if self.scaler:
             state["scaler_state_dict"] = self.scaler.state_dict()

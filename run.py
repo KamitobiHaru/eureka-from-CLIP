@@ -80,7 +80,8 @@ def save_thumbnail(path: str, frame: np.ndarray) -> None:
     cv2.imwrite(path, bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
 
-def load_bert_text_encoder(bert_checkpoint: str, config_path: str = "config/default.yaml") -> callable:
+def load_bert_text_encoder(bert_checkpoint: str, config_path: str = "config/default.yaml",
+                            device: str = None) -> callable:
     """Load a trained BertEncoder checkpoint and return a text encoding function."""
     import yaml
     from transformers import BertTokenizer
@@ -89,17 +90,22 @@ def load_bert_text_encoder(bert_checkpoint: str, config_path: str = "config/defa
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
 
     bert_path = cfg["model"]["bert_model_path"]
     print(f"Loading BERT from: {bert_path}")
+
+    # Check if checkpoint was trained with LoRA by peeking at its metadata
+    ckpt = torch.load(bert_checkpoint, map_location=device, weights_only=True)
+    lora_cfg = ckpt.get("lora_config", None)
+
     model = BertEncoder(
         model_path=bert_path,
         embed_dim=cfg["model"]["embed_dim"],
+        lora_cfg=lora_cfg,
     ).to(device)
 
-    print(f"Loading checkpoint: {bert_checkpoint}")
-    ckpt = torch.load(bert_checkpoint, map_location=device, weights_only=True)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
 
@@ -130,8 +136,14 @@ def main():
     parser.add_argument("--bert_checkpoint", "-b", default=None,
                         help="Path to trained BERT checkpoint .pt file. "
                              "If not set, uses CLIP's default text encoder.")
+    parser.add_argument("--temporal_checkpoint", "-t", default=None,
+                        help="Path to joint temporal+bert checkpoint .pt file. "
+                             "Enables the temporal transformer for scene encoding "
+                             "(overrides --bert_checkpoint).")
     parser.add_argument("--config", default="config/default.yaml",
                         help="Config file for BERT model path (default: config/default.yaml)")
+    parser.add_argument("--device", default=None,
+                        help="Device to run on: 'cpu' or 'cuda'. Default: auto-detect.")
     args = parser.parse_args()
 
     # ── Step 1: load pre-segmented scenes ──────────────────
@@ -145,22 +157,36 @@ def main():
 
     # ── Step 2: encode scenes ──────────────────────────────
     print("Loading CLIP encoder (vision)...")
-    engine = SearchEngine()
 
-    if args.bert_checkpoint:
-        text_encoder = load_bert_text_encoder(args.bert_checkpoint, args.config)
-        engine.text_encoder = text_encoder
+    if args.temporal_checkpoint:
+        from clip_search import build_temporal_pipeline
+        pipeline = build_temporal_pipeline(args.temporal_checkpoint, args.config,
+                                           device=args.device)
+        engine = SearchEngine(scene_encoder=pipeline.scene_encoder,
+                              text_encoder=pipeline.text_encoder)
+    else:
+        device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
+        engine = SearchEngine(device=device)
+        if args.bert_checkpoint:
+            text_encoder = load_bert_text_encoder(args.bert_checkpoint, args.config,
+                                                   device=args.device)
+            engine.text_encoder = text_encoder
 
     # Encode all scenes
     engine.scenes = scenes
     scene_embs = []
     for scene in scenes:
-        emb = engine.encoder.encode_scene(scene.frames)
+        emb = engine.scene_encoder(scene.frames) if engine.scene_encoder else engine.encoder.encode_scene(scene.frames)
         scene_embs.append(emb)
     engine.scene_embs = np.stack(scene_embs)
 
     # ── Step 3: search ─────────────────────────────────────
-    encoder_name = "BERT" if args.bert_checkpoint else "CLIP"
+    if args.temporal_checkpoint:
+        encoder_name = "Temporal+BERT"
+    elif args.bert_checkpoint:
+        encoder_name = "BERT"
+    else:
+        encoder_name = "CLIP"
     print(f'\nSearching for: "{args.query}"  (encoder: {encoder_name})')
     results = engine.search(args.query, top_k=args.top_k)
 

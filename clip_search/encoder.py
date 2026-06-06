@@ -67,6 +67,20 @@ class CLIPEncoder:
         return embs.cpu().numpy().astype(np.float32)
 
     @torch.no_grad()
+    def encode_frames(self, frames: list) -> np.ndarray:
+        """Encode a list of RGB frames into per-frame (N, 512) L2-normed embeddings.
+
+        Unlike encode_scene(), this does NOT mean-pool. Returns all per-frame
+        embeddings for downstream temporal processing.
+        """
+        if not frames:
+            return np.zeros((0, 512), dtype=np.float32)
+        images = torch.stack([self.preprocess(Image.fromarray(f)) for f in frames]).to(self.device)
+        embs = self.model.encode_image(images)  # (N, 512)
+        embs = embs / embs.norm(dim=-1, keepdim=True)
+        return embs.cpu().numpy().astype(np.float32)
+
+    @torch.no_grad()
     def encode_text(self, text: str) -> np.ndarray:
         """Encode a text query into a 512-dim normalized embedding."""
         tokens = self.tokenizer([text]).to(self.device)

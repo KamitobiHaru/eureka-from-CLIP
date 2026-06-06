@@ -12,14 +12,49 @@ model:
 
 training:
   batch_size: 64
-  epochs: 7
+  epochs: 20
   lr: 0.00003
   weight_decay: 0.02
   temperature: 0.07
-  warmup_steps: 6000
+  warmup_steps: 3698
   max_grad_norm: 1.0
   amp: true
   log_interval: 10
   eval_interval: 2000
   num_workers: 4
-  checkpoint_dir: ./checkpoints
+  checkpoint_dir: /run/media/occccce/新加卷1/checkpoints/new4lora
+
+lora:
+  enabled: true
+  r: 8
+  alpha: 16
+  dropout: 0.1
+  target_modules:
+    - "query"
+    - "value"
+
+temporal:
+  # Model architecture
+  d_model: 512
+  nhead: 8
+  num_layers: 2
+  dim_feedforward: 1024
+  dropout: 0.1
+  max_frames: 16
+
+  # Sequence construction
+  sequence_min_len: 3
+  sequence_max_len: 10
+
+  # Loss weights
+  order_consistency_margin: 0.2
+  order_consistency_weight: 0.5
+  clip_anchor_weight: 0.3
+  text_order_weight: 0.1
+
+  # Optimisation
+  temporal_lr: 0.0001
+  bert_lr: 0.00003
+
+  # Saving
+  save_every_epoch: true

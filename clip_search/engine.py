@@ -10,14 +10,20 @@ class SearchEngine:
     """Orchestrator: segment video → encode scenes → rank by text query similarity."""
 
     def __init__(self, clip_encoder: CLIPEncoder = None,
-                 text_encoder: Optional[Callable[[str], np.ndarray]] = None):
-        self.encoder = clip_encoder or CLIPEncoder()
+                 text_encoder: Optional[Callable[[str], np.ndarray]] = None,
+                 scene_encoder: Optional[Callable[[List[np.ndarray]], np.ndarray]] = None,
+                 device: str = None):
+        self.encoder = clip_encoder or CLIPEncoder(device=device)
         self.text_encoder = text_encoder  # callable(str) -> 512-dim L2-normalized embedding
+        self.scene_encoder = scene_encoder  # callable(frames) -> 512-dim embedding
         self.scenes: List[Scene] = []
         self.scene_embs: np.ndarray = None  # (N, 512)
 
     def process_video(self, video_path: str) -> List[Scene]:
         """Segment a video into scenes and encode each scene.
+
+        Uses scene_encoder when available, otherwise falls back to
+        CLIPEncoder.encode_scene() (mean pooling over frames).
 
         Returns the list of Scene objects (also stored internally).
         """
@@ -27,7 +33,10 @@ class SearchEngine:
 
         scene_embs = []
         for scene in self.scenes:
-            emb = self.encoder.encode_scene(scene.frames)
+            if self.scene_encoder is not None:
+                emb = self.scene_encoder(scene.frames)
+            else:
+                emb = self.encoder.encode_scene(scene.frames)
             scene_embs.append(emb)
 
         self.scene_embs = np.stack(scene_embs)  # (N, 512)

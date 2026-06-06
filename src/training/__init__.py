@@ -1,4 +1,4 @@
-from .loss import SymmetricInfoNCE
+from .loss import SymmetricInfoNCE, OrderConsistencyLoss
 from .trainer import Trainer
 
-__all__ = ["SymmetricInfoNCE", "Trainer"]
+__all__ = ["SymmetricInfoNCE", "OrderConsistencyLoss", "Trainer"]

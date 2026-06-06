@@ -49,12 +49,13 @@ def main():
         print("Run the download script first: bash scripts/download_bert.sh")
         sys.exit(1)
 
+    lora_cfg = cfg.get("lora", {})
     print("Loading BERT model...")
     model = BertEncoder(
         model_path=bert_path,
         embed_dim=cfg["model"]["embed_dim"],
+        lora_cfg=lora_cfg,
     ).to(device)
-    print(f"  Params: {sum(p.numel() for p in model.parameters()):,}")
 
     # ── Tokenizer ────────────────────────────────────────────
     tokenizer = BertTokenizer.from_pretrained(bert_path, local_files_only=True)

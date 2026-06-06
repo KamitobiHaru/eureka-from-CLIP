@@ -1,18 +1,25 @@
 import gradio as gr
 from pathlib import Path
 
-from clip_search import SearchEngine
+from clip_search import SearchEngine, build_temporal_pipeline
 
 CACHE_DIR = Path("cache")
 CACHE_DIR.mkdir(exist_ok=True)
 
-def process_video(video_path: str, progress=gr.Progress()):
+def process_video(video_path: str, use_temporal: bool = False,
+                  temporal_checkpoint: str = "", progress=gr.Progress()):
     """Segment and encode a video. Returns (engine_state, gallery, status)."""
     if not video_path:
         raise gr.Error("Please upload a video file.")
 
     progress(0, desc="Loading CLIP encoder...")
-    engine = SearchEngine()
+
+    if use_temporal and temporal_checkpoint:
+        pipeline = build_temporal_pipeline(temporal_checkpoint)
+        engine = SearchEngine(scene_encoder=pipeline.scene_encoder,
+                              text_encoder=pipeline.text_encoder)
+    else:
+        engine = SearchEngine()
 
     progress(0.2, desc="Detecting scenes...")
     scenes = engine.process_video(video_path)
@@ -69,6 +76,12 @@ with gr.Blocks(title="CLIP Video Scene Search") as demo:
             with gr.Row():
                 with gr.Column(scale=1):
                     video_input = gr.Video(label="Upload Video", height=300)
+                    with gr.Accordion("Temporal Transformer (optional)", open=False):
+                        use_temporal = gr.Checkbox(label="Enable Temporal Transformer", value=False)
+                        temporal_checkpoint = gr.Textbox(
+                            label="Checkpoint Path",
+                            placeholder="checkpoints/temporal_best.pt",
+                        )
                     process_btn = gr.Button("🚀 Process Video", variant="primary", size="lg")
                     status_text = gr.Textbox(label="Status", interactive=False)
                 with gr.Column(scale=1):
@@ -81,7 +94,7 @@ with gr.Blocks(title="CLIP Video Scene Search") as demo:
 
             process_btn.click(
                 fn=process_video,
-                inputs=[video_input],
+                inputs=[video_input, use_temporal, temporal_checkpoint],
                 outputs=[engine_state, scene_gallery, status_text],
             )
 
