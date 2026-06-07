@@ -139,17 +139,21 @@ def main():
 
     # ── Queue & Loss ─────────────────────────────────────
     queue_max_size = cfg.get("queue", {}).get("max_size", 0)
+    mask_stale_texts = cfg.get("queue", {}).get("mask_stale_texts", False)
     t2i_weight = cfg["training"].get("t2i_weight", 0.5)
     uniform_weight = cfg["training"].get("uniformity_weight", 0.0)
     queue = None
     if queue_max_size > 0:
         print(f"  ContrastiveQueue: max_size={queue_max_size:,}")
+        if mask_stale_texts:
+            print(f"  mask_stale_texts: True (i2t uses in-batch negatives only)")
         queue = ContrastiveQueue(max_size=queue_max_size)
         loss_fn = QueueInfoNCE(
             temperature=cfg["training"]["temperature"],
             queue=queue,
             t2i_weight=t2i_weight,
             uniform_weight=uniform_weight,
+            mask_stale_texts=mask_stale_texts,
         )
     else:
         loss_fn = SymmetricInfoNCE(
@@ -218,6 +222,13 @@ def main():
             if uniform_val is not None:
                 postfix["U"] = f"{uniform_val:.4f}"
                 epoch_uniform_vals.append(uniform_val)
+            # Raw i2t/t2i components from QueueInfoNCE (before weighting)
+            # These are the two values being combined in the weighted loss
+            i2t_q = result.get("i2t_q")
+            t2i_q = result.get("t2i_q")
+            if i2t_q is not None:
+                postfix["i2t_q"] = f"{i2t_q:.4f}"
+                postfix["t2i_q"] = f"{t2i_q:.4f}"
             pbar.set_postfix(**postfix)
 
             # ── Step-level validation ─────────────────────

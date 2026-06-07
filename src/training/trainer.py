@@ -102,6 +102,16 @@ class Trainer:
         if isinstance(self.loss_fn, QueueInfoNCE):
             result["loss_inbatch"] = loss_inbatch.item()
             result["uniformity"] = getattr(self.loss_fn, "_last_uniformity", 0.0)
+            # Raw i2t/t2i from queue-assisted training loss
+            result["i2t_q"] = getattr(self.loss_fn, "_last_i2t", 0.0)
+            result["t2i_q"] = getattr(self.loss_fn, "_last_t2i", 0.0)
+            # Raw i2t/t2i from in-batch eval loss (no queue)
+            result["i2t_ib"] = getattr(self.eval_loss_fn, "_last_i2t", 0.0)
+            result["t2i_ib"] = getattr(self.eval_loss_fn, "_last_t2i", 0.0)
+        else:
+            # Raw i2t/t2i from non-queue training loss
+            result["i2t_q"] = getattr(self.loss_fn, "_last_i2t", 0.0)
+            result["t2i_q"] = getattr(self.loss_fn, "_last_t2i", 0.0)
         return result
 
     @torch.no_grad()

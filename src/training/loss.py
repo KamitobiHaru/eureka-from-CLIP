@@ -37,7 +37,12 @@ class SymmetricInfoNCE(nn.Module):
         else:
             sim = emb_a @ emb_b.T / self.temp  # (B, B)
         w = self.t2i_weight
-        return (1 - w) * self.ce(sim, labels) + w * self.ce(sim.T, labels)
+        l_i2t = self.ce(sim, labels)
+        l_t2i = self.ce(sim.T, labels)
+        with torch.no_grad():
+            self._last_i2t = l_i2t.item()
+            self._last_t2i = l_t2i.item()
+        return (1 - w) * l_i2t + w * l_t2i
 
 
 class OrderConsistencyLoss(nn.Module):
@@ -83,12 +88,14 @@ class QueueInfoNCE(nn.Module):
         queue: Optional[ContrastiveQueue] = None,
         t2i_weight: float = 0.5,
         uniform_weight: float = 0.0,
+        mask_stale_texts: bool = False,
     ):
         super().__init__()
         self.temp = temperature
         self.queue = queue
         self.t2i_weight = t2i_weight
         self.uniform_weight = uniform_weight
+        self.mask_stale_texts = mask_stale_texts
         self.ce = nn.CrossEntropyLoss()
 
     def forward(
@@ -111,54 +118,97 @@ class QueueInfoNCE(nn.Module):
         if self.queue is None or len(self.queue) == 0:
             sim = image_emb @ text_emb.T * scale
             w = self.t2i_weight
-            contrastive = (1 - w) * self.ce(sim, labels) + w * self.ce(sim.T, labels)
+            l_i2t = self.ce(sim, labels)
+            l_t2i = self.ce(sim.T, labels)
+            with torch.no_grad():
+                self._last_i2t = l_i2t.item()
+                self._last_t2i = l_t2i.item()
+            contrastive = (1 - w) * l_i2t + w * l_t2i
             return contrastive
 
         # ── Queue-assisted loss ────────────────────────────────────
         q_image, q_text, q_ids = self.queue.get(image_emb.device)
         Q = q_image.size(0)
 
-        # All candidates: current batch + queue
-        all_text = torch.cat([text_emb, q_text], dim=0)   # (B+Q, D)
-        all_image = torch.cat([image_emb, q_image], dim=0) # (B+Q, D)
+        if self.mask_stale_texts:
+            # i2t: in-batch only (avoid stale queue text embeddings)
+            sim_i2t = image_emb @ text_emb.T * scale          # (B, B)
+            # t2i: with queue (images are frozen → no staleness)
+            all_image = torch.cat([image_emb, q_image], dim=0)
+            sim_t2i = text_emb @ all_image.T * scale          # (B, B+Q)
+        else:
+            # Original: both directions use the full queue
+            all_text = torch.cat([text_emb, q_text], dim=0)   # (B+Q, D)
+            all_image = torch.cat([image_emb, q_image], dim=0) # (B+Q, D)
+            sim_i2t = image_emb @ all_text.T * scale          # (B, B+Q)
+            sim_t2i = text_emb @ all_image.T * scale          # (B, B+Q)
 
-        sim_i2t = image_emb @ all_text.T * scale    # (B, B+Q)
-        sim_t2i = text_emb @ all_image.T * scale    # (B, B+Q)
-
-        # ── False-negative mask (O(B+Q+M) dict-based) ──────────────
+        # ── False-negative mask ──────────────────────────────────
         if image_ids is not None:
-            mask = torch.zeros(B, B + Q, dtype=torch.bool, device=image_emb.device)
-
             # image_id → positions in current batch
             id_to_bpos: dict[str, list] = {}
             for i, img_id in enumerate(image_ids):
                 id_to_bpos.setdefault(img_id, []).append(i)
 
-            # image_id → positions in queue
-            id_to_qpos: dict[str, list] = {}
-            for q_idx, q_id in enumerate(q_ids):
-                id_to_qpos.setdefault(q_id, []).append(q_idx)
+            if self.mask_stale_texts:
+                # ── i2t mask (B, B): in-batch same-image captions ──
+                mask_i2t = torch.zeros(B, B, dtype=torch.bool, device=image_emb.device)
+                for b_positions in id_to_bpos.values():
+                    if len(b_positions) > 1:
+                        for b_idx in b_positions:
+                            for other in b_positions:
+                                if b_idx != other:
+                                    mask_i2t[b_idx, other] = True
+                sim_i2t = sim_i2t.masked_fill(mask_i2t, float("-inf"))
 
-            # Only iterate over IDs that appear in BOTH batch and queue
-            for img_id, b_positions in id_to_bpos.items():
-                q_positions = id_to_qpos.get(img_id)
-                if q_positions:
-                    for b_idx in b_positions:
-                        for q_idx in q_positions:
-                            mask[b_idx, B + q_idx] = True
+                # ── t2i mask (B, B+Q): batch + queue ──────────────
+                id_to_qpos: dict[str, list] = {}
+                for q_idx, q_id in enumerate(q_ids):
+                    id_to_qpos.setdefault(q_id, []).append(q_idx)
 
-                # In-batch false negatives (same image, different caption)
-                if len(b_positions) > 1:
-                    for b_idx in b_positions:
-                        for other in b_positions:
-                            if b_idx != other:
-                                mask[b_idx, other] = True
+                mask_t2i = torch.zeros(B, B + Q, dtype=torch.bool, device=image_emb.device)
+                for img_id, b_positions in id_to_bpos.items():
+                    q_positions = id_to_qpos.get(img_id)
+                    if q_positions:
+                        for b_idx in b_positions:
+                            for q_idx in q_positions:
+                                mask_t2i[b_idx, B + q_idx] = True
+                    if len(b_positions) > 1:
+                        for b_idx in b_positions:
+                            for other in b_positions:
+                                if b_idx != other:
+                                    mask_t2i[b_idx, other] = True
+                sim_t2i = sim_t2i.masked_fill(mask_t2i, float("-inf"))
+            else:
+                # Original: single mask for both directions
+                mask = torch.zeros(B, B + Q, dtype=torch.bool, device=image_emb.device)
 
-            sim_i2t = sim_i2t.masked_fill(mask, float("-inf"))
-            sim_t2i = sim_t2i.masked_fill(mask, float("-inf"))
+                id_to_qpos: dict[str, list] = {}
+                for q_idx, q_id in enumerate(q_ids):
+                    id_to_qpos.setdefault(q_id, []).append(q_idx)
+
+                for img_id, b_positions in id_to_bpos.items():
+                    q_positions = id_to_qpos.get(img_id)
+                    if q_positions:
+                        for b_idx in b_positions:
+                            for q_idx in q_positions:
+                                mask[b_idx, B + q_idx] = True
+                    if len(b_positions) > 1:
+                        for b_idx in b_positions:
+                            for other in b_positions:
+                                if b_idx != other:
+                                    mask[b_idx, other] = True
+
+                sim_i2t = sim_i2t.masked_fill(mask, float("-inf"))
+                sim_t2i = sim_t2i.masked_fill(mask, float("-inf"))
 
         w = self.t2i_weight
-        contrastive = (1 - w) * self.ce(sim_i2t, labels) + w * self.ce(sim_t2i, labels)
+        l_i2t = self.ce(sim_i2t, labels)
+        l_t2i = self.ce(sim_t2i, labels)
+        contrastive = (1 - w) * l_i2t + w * l_t2i
+        with torch.no_grad():
+            self._last_i2t = l_i2t.item()
+            self._last_t2i = l_t2i.item()
 
         # ── Text uniformity regulariser ──────────────────────────
         if self.uniform_weight > 0 and B > 1 and image_ids is not None:
