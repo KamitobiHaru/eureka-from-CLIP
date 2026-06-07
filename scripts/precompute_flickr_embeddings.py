@@ -83,6 +83,8 @@ def main():
     parser.add_argument("--config", default="config/default.yaml")
     parser.add_argument("--batch_size", type=int, default=64, help="Images per batch")
     parser.add_argument("--num_workers", type=int, default=8, help="DataLoader workers")
+    parser.add_argument("--device", default=None,
+                        help="Device to use (e.g. 'cuda:0', 'cuda:1', 'cpu'). Default: auto-detect.")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -138,7 +140,7 @@ def main():
             if n.endswith(".jpg") and not n.startswith("__MACOSX")
         }
 
-    encoder = CLIPEncoder(model_type=clip_model)
+    encoder = CLIPEncoder(model_type=clip_model, device=args.device)
     device = encoder.device
 
     dataset = FlickrPrecomputationDataset(

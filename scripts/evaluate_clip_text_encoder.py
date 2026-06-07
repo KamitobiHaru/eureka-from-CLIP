@@ -34,6 +34,8 @@ from src.training.evaluation import compute_recall_metrics
 def main():
     parser = argparse.ArgumentParser(description="Evaluate CLIP text encoder on Flickr30k")
     parser.add_argument("--config", default="config/default.yaml")
+    parser.add_argument("--device", default=None,
+                        help="Device to use (e.g. 'cuda:0', 'cuda:1', 'cpu'). Default: auto-detect.")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -43,7 +45,7 @@ def main():
     flickr_cfg = cfg.get("flickr", {})
     flickr_root = Path(flickr_cfg["root"])
     ann_file = flickr_root / flickr_cfg.get("annotation_file", "flickr_annotations_30k.csv")
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
     # ── Load CLIP model ──────────────────────────────────────

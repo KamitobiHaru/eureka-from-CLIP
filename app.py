@@ -1,3 +1,4 @@
+import argparse
 import gradio as gr
 from pathlib import Path
 
@@ -6,20 +7,27 @@ from clip_search import SearchEngine, build_temporal_pipeline
 CACHE_DIR = Path("cache")
 CACHE_DIR.mkdir(exist_ok=True)
 
+# Set via --device CLI arg in __main__
+DEVICE = None
+
+
 def process_video(video_path: str, use_temporal: bool = False,
-                  temporal_checkpoint: str = "", progress=gr.Progress()):
+                  temporal_checkpoint: str = "",
+                  bert_checkpoint: str = "", progress=gr.Progress()):
     """Segment and encode a video. Returns (engine_state, gallery, status)."""
     if not video_path:
         raise gr.Error("Please upload a video file.")
 
     progress(0, desc="Loading CLIP encoder...")
 
-    if use_temporal and temporal_checkpoint:
-        pipeline = build_temporal_pipeline(temporal_checkpoint)
+    if use_temporal and temporal_checkpoint and bert_checkpoint:
+        pipeline = build_temporal_pipeline(
+            temporal_checkpoint, bert_checkpoint, device=DEVICE,
+        )
         engine = SearchEngine(scene_encoder=pipeline.scene_encoder,
                               text_encoder=pipeline.text_encoder)
     else:
-        engine = SearchEngine()
+        engine = SearchEngine(device=DEVICE)
 
     progress(0.2, desc="Detecting scenes...")
     scenes = engine.process_video(video_path)
@@ -79,8 +87,12 @@ with gr.Blocks(title="CLIP Video Scene Search") as demo:
                     with gr.Accordion("Temporal Transformer (optional)", open=False):
                         use_temporal = gr.Checkbox(label="Enable Temporal Transformer", value=False)
                         temporal_checkpoint = gr.Textbox(
-                            label="Checkpoint Path",
+                            label="Temporal Checkpoint Path",
                             placeholder="checkpoints/temporal_best.pt",
+                        )
+                        bert_checkpoint = gr.Textbox(
+                            label="BERT Checkpoint Path",
+                            placeholder="checkpoints/bert_best.pt",
                         )
                     process_btn = gr.Button("🚀 Process Video", variant="primary", size="lg")
                     status_text = gr.Textbox(label="Status", interactive=False)
@@ -94,7 +106,7 @@ with gr.Blocks(title="CLIP Video Scene Search") as demo:
 
             process_btn.click(
                 fn=process_video,
-                inputs=[video_input, use_temporal, temporal_checkpoint],
+                inputs=[video_input, use_temporal, temporal_checkpoint, bert_checkpoint],
                 outputs=[engine_state, scene_gallery, status_text],
             )
 
@@ -137,6 +149,13 @@ with gr.Blocks(title="CLIP Video Scene Search") as demo:
 
 if __name__ == "__main__":
     import socket
+
+    parser = argparse.ArgumentParser(description="Launch CLIP Video Scene Search UI")
+    parser.add_argument("--device", default=None,
+                        help="Device to use (e.g. 'cuda:0', 'cuda:1', 'cpu'). Default: auto-detect.")
+    args = parser.parse_args()
+    global DEVICE
+    DEVICE = args.device
 
     def find_free_port(start: int, max_attempts: int = 10) -> int:
         for port in range(start, start + max_attempts):

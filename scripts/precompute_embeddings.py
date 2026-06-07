@@ -51,6 +51,8 @@ def main():
     parser.add_argument("--split", default="val2017", help="COCO split: val2017 or train2017")
     parser.add_argument("--batch_size", type=int, default=64, help="Images per batch")
     parser.add_argument("--num_workers", type=int, default=8, help="DataLoader workers")
+    parser.add_argument("--device", default=None,
+                        help="Device to use (e.g. 'cuda:0', 'cuda:1', 'cpu'). Default: auto-detect.")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -85,7 +87,7 @@ def main():
     print(f"  Workers: {args.num_workers}")
     print(f"  Already cached: {already_cached}")
 
-    encoder = CLIPEncoder(model_type=clip_model)
+    encoder = CLIPEncoder(model_type=clip_model, device=args.device)
     device = encoder.device
 
     dataset = CocoPrecomputationDataset(images, split_dir, cache_dir, encoder.preprocess)

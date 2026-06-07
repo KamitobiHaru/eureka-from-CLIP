@@ -146,12 +146,14 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate a BERT checkpoint on COCO+Flickr")
     parser.add_argument("checkpoint", type=str, help="Path to checkpoint .pt file")
     parser.add_argument("--config", default="config/default.yaml")
+    parser.add_argument("--device", default=None,
+                        help="Device to use (e.g. 'cuda:0', 'cuda:1', 'cpu'). Default: auto-detect.")
     args = parser.parse_args()
 
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
     # ── Model ────────────────────────────────────────────

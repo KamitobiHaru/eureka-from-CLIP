@@ -137,9 +137,9 @@ def main():
                         help="Path to trained BERT checkpoint .pt file. "
                              "If not set, uses CLIP's default text encoder.")
     parser.add_argument("--temporal_checkpoint", "-t", default=None,
-                        help="Path to joint temporal+bert checkpoint .pt file. "
-                             "Enables the temporal transformer for scene encoding "
-                             "(overrides --bert_checkpoint).")
+                        help="Path to trained temporal-transformer checkpoint .pt file. "
+                             "Requires --bert_checkpoint also. Enables the temporal "
+                             "transformer for scene encoding (overrides --bert_checkpoint).")
     parser.add_argument("--config", default="config/default.yaml",
                         help="Config file for BERT model path (default: config/default.yaml)")
     parser.add_argument("--device", default=None,
@@ -160,8 +160,10 @@ def main():
 
     if args.temporal_checkpoint:
         from clip_search import build_temporal_pipeline
-        pipeline = build_temporal_pipeline(args.temporal_checkpoint, args.config,
-                                           device=args.device)
+        pipeline = build_temporal_pipeline(
+            args.temporal_checkpoint, args.bert_checkpoint,
+            config_path=args.config, device=args.device,
+        )
         engine = SearchEngine(scene_encoder=pipeline.scene_encoder,
                               text_encoder=pipeline.text_encoder)
     else:

@@ -38,12 +38,14 @@ def main():
                         help="Resume from a checkpoint .pt file (e.g. checkpoints/bert_best.pt)")
     parser.add_argument("--checkpoint_dir", default=None,
                         help="Override checkpoint directory (default: from config)")
+    parser.add_argument("--device", default=None,
+                        help="Device to use (e.g. 'cuda:0', 'cuda:1', 'cpu'). Default: auto-detect.")
     args = parser.parse_args()
 
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
     print(f"Config: {args.config}")
 
@@ -146,7 +148,7 @@ def main():
         print(f"  ContrastiveQueue: max_size={queue_max_size:,}")
         if mask_stale_texts:
             print(f"  mask_stale_texts: True (i2t uses in-batch negatives only)")
-        queue = ContrastiveQueue(max_size=queue_max_size)
+        queue = ContrastiveQueue(max_size=queue_max_size, device=device)
         loss_fn = QueueInfoNCE(
             temperature=cfg["training"]["temperature"],
             queue=queue,

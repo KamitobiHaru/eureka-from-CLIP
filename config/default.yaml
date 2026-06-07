@@ -1,13 +1,13 @@
 data:
-  # Root directory containing train2017/, val2017/, annotations/
-  coco_root: /run/media/occccce/新加卷1/exactlyCOC
+  # Root directory for COCO annotation files
+  coco_root: ./dataset_annotation
   # Relative path from coco_root to the annotation files
   annotations_dir: annotations_trainval2017/annotations
   # Directory to store precomputed CLIP vision embeddings
   embedding_cache: ./data/coco/clip_embeddings
 
 flickr:
-  root: /run/media/occccce/新加卷1/flickr30
+  root: ./dataset_annotation
   annotation_file: flickr_annotations_30k.csv
   embedding_cache: ./data/flickr30k/clip_embeddings
   # Set false to exclude Flickr30k from training (use only for zero-shot eval)
@@ -24,7 +24,7 @@ model:
   embed_dim: 512
 
 training:
-  batch_size: 64
+  batch_size: 128
   epochs: 30
   lr: 0.0003
   weight_decay: 0.01
@@ -38,12 +38,12 @@ training:
   eval_interval: 6000
   step_level_val: false
   num_workers: 16
-  checkpoint_dir: /run/media/occccce/新加卷/checkpoints/legacylora_learnabletemp_cocoonly_lora4target_with_uniform_withweight1_mask_stale_openai
+  checkpoint_dir: ../weights/r8_weight0.75_uniformity1.25
 
 lora:
   enabled: true
-  r: 16
-  alpha: 32
+  r: 8
+  alpha: 16
   dropout: 0.1
   target_modules:
     - "key"
@@ -52,18 +52,6 @@ lora:
     - "output.dense"
 
 temporal:
-  # Training mode: joint | bert_frozen | clip_frozen
-  #   joint        — train BERT + TemporalTransformer together (original)
-  #   bert_frozen  — load pretrained BERT checkpoint, freeze BERT, train temporal only
-  #   clip_frozen  — use frozen CLIP text encoder, train temporal only (baseline)
-  mode: joint
-
-  # Path to a Phase-1 BERT checkpoint (required in bert_frozen mode)
-  bert_checkpoint: ""
-
-  # Freeze the text encoder in non-joint modes
-  freeze_text_encoder: true
-
   # Model architecture
   d_model: 512
   nhead: 8
@@ -79,12 +67,23 @@ temporal:
   # Loss weights
   order_consistency_margin: 0.2
   order_consistency_weight: 0.5
-  clip_anchor_weight: 0.3
-  text_order_weight: 0.1
+  anchor_mse_weight: 1.0
 
   # Optimisation
   temporal_lr: 0.0001
-  bert_lr: 0.00003
+
+motion:
+  enabled: true
+  motion_ratio: 0.5
+  cache_dir: ./data/coco/mixed_sequences
+  inpaint_size: 256
+  yolo_model: ./models/yolo26x-seg.pt
+  lama_model: ./models/lama
+  coco_image_root: /data2/zsy/datasets/coco2017_trainval
+  min_object_area: 0.08
+  max_object_area: 0.5
+  confidence_threshold: 0.5
+  valid_classes: [0, 1, 2, 3, 4, 5, 6, 7, 8, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
 
 queue:
   max_size: 49152

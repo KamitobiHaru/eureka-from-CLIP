@@ -15,7 +15,7 @@ env/
 .env
 
 # Data
-data/
+/data/
 *.zip
 *.tar.gz
 *.pt
@@ -47,8 +47,10 @@ runs/
 # Claude
 .claude/
 
-models/
+/models/
 
 output/
 
 segments/
+
+dataset_annotation/

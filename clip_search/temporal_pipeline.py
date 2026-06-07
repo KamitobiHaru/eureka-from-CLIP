@@ -1,4 +1,9 @@
-"""Factory for building the temporal inference pipeline (CLIP + TemporalTransformer + BERT)."""
+"""Factory for building the temporal inference pipeline (CLIP + TemporalTransformer + BERT).
+
+Requires two separate checkpoints:
+  - BERT checkpoint from ``train_bert.py``
+  - TemporalTransformer checkpoint from ``train_temporal.py``
+"""
 
 from dataclasses import dataclass
 from typing import Callable, List
@@ -20,11 +25,18 @@ class TemporalPipeline:
 
 
 def build_temporal_pipeline(
-    checkpoint_path: str,
+    temporal_checkpoint: str,
+    bert_checkpoint: str,
     config_path: str = "config/default.yaml",
     device: str = None,
 ) -> TemporalPipeline:
-    """Load CLIP + TemporalTransformer + BERT from a joint checkpoint.
+    """Load CLIP + TemporalTransformer + BERT from separate checkpoints.
+
+    Args:
+        temporal_checkpoint: Path to temporal-transformer .pt file.
+        bert_checkpoint: Path to BERT .pt file from ``train_bert.py``.
+        config_path: YAML config for model paths / architecture.
+        device: Device for inference.
 
     Returns a TemporalPipeline with scene_encoder and text_encoder callables.
     """
@@ -48,19 +60,21 @@ def build_temporal_pipeline(
         max_frames=t_cfg.get("max_frames", 16),
     ).to(device)
 
-    # BERT text encoder (reconstruct LoRA config if checkpoint was trained with LoRA)
-    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
-    lora_cfg = ckpt.get("lora_config", None)
+    # BERT text encoder (load LoRA config from checkpoint metadata)
+    bert_ckpt = torch.load(bert_checkpoint, map_location=device, weights_only=True)
+    lora_cfg = bert_ckpt.get("lora_config", None)
     bert = BertEncoder(
         model_path=cfg["model"]["bert_model_path"],
         embed_dim=cfg["model"]["embed_dim"],
         lora_cfg=lora_cfg,
     ).to(device)
-
-    temporal.load_state_dict(ckpt["temporal_state_dict"])
-    bert.load_state_dict(ckpt["bert_state_dict"])
-    temporal.eval()
+    bert.load_state_dict(bert_ckpt["model_state_dict"])
     bert.eval()
+
+    # Temporal weights
+    temporal_ckpt = torch.load(temporal_checkpoint, map_location=device, weights_only=True)
+    temporal.load_state_dict(temporal_ckpt["temporal_state_dict"])
+    temporal.eval()
 
     # Tokenizer
     tokenizer = BertTokenizer.from_pretrained(
