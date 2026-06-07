@@ -13,6 +13,12 @@ flickr:
   # Set false to exclude Flickr30k from training (use only for zero-shot eval)
   train_on: false
 
+clip:
+  # Which CLIP model variant to use for vision embeddings.
+  #   laion  — open_clip ViT-B/32 trained on LAION-2B (stronger, current default)
+  #   openai — OpenAI's original ViT-B/32 trained on WIT-400M
+  model: openai
+
 model:
   bert_model_path: ./models/bert-base-uncased
   embed_dim: 512
@@ -23,7 +29,7 @@ training:
   lr: 0.0003
   weight_decay: 0.01
   temperature: 0.07     # Initial value for learnable CLIP-style logit_scale
-  t2i_weight: 0.5       # >0.5 gives more weight to t2i direction (default 0.5 = symmetric)
+  t2i_weight: 0.75       # >0.5 gives more weight to t2i direction (default 0.5 = symmetric)
   uniformity_weight: 1.25  # weight for text uniformity regularizer (0 = disabled)
   warmup_steps: 34536
   max_grad_norm: 1.0
@@ -32,7 +38,7 @@ training:
   eval_interval: 6000
   step_level_val: false
   num_workers: 16
-  checkpoint_dir: /run/media/occccce/新加卷/checkpoints/legacylora_learnabletemp_cocoonly_lora4target_with_uniform_withweight1_mask_stale
+  checkpoint_dir: /run/media/occccce/新加卷/checkpoints/legacylora_learnabletemp_cocoonly_lora4target_with_uniform_withweight1_mask_stale_openai
 
 lora:
   enabled: true
