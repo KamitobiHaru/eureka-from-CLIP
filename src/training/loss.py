@@ -40,8 +40,8 @@ class SymmetricInfoNCE(nn.Module):
         l_i2t = self.ce(sim, labels)
         l_t2i = self.ce(sim.T, labels)
         with torch.no_grad():
-            self._last_i2t = l_i2t.item()
-            self._last_t2i = l_t2i.item()
+            self._last_i2t = l_i2t.detach()
+            self._last_t2i = l_t2i.detach()
         return (1 - w) * l_i2t + w * l_t2i
 
 
@@ -121,8 +121,8 @@ class QueueInfoNCE(nn.Module):
             l_i2t = self.ce(sim, labels)
             l_t2i = self.ce(sim.T, labels)
             with torch.no_grad():
-                self._last_i2t = l_i2t.item()
-                self._last_t2i = l_t2i.item()
+                self._last_i2t = l_i2t.detach()
+                self._last_t2i = l_t2i.detach()
             contrastive = (1 - w) * l_i2t + w * l_t2i
             return contrastive
 
@@ -207,8 +207,8 @@ class QueueInfoNCE(nn.Module):
         l_t2i = self.ce(sim_t2i, labels)
         contrastive = (1 - w) * l_i2t + w * l_t2i
         with torch.no_grad():
-            self._last_i2t = l_i2t.item()
-            self._last_t2i = l_t2i.item()
+            self._last_i2t = l_i2t.detach()
+            self._last_t2i = l_t2i.detach()
 
         # ── Text uniformity regulariser ──────────────────────────
         if self.uniform_weight > 0 and B > 1 and image_ids is not None:
@@ -229,7 +229,7 @@ class QueueInfoNCE(nn.Module):
             if n_pairs > 0:
                 uniformity = torch.exp(text_sim[uni_mask]).mean().log()
                 contrastive = contrastive + self.uniform_weight * uniformity
-                self._last_uniformity = uniformity.item()
+                self._last_uniformity = uniformity.detach()
             else:
                 self._last_uniformity = 0.0
         else:

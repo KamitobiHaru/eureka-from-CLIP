@@ -21,6 +21,11 @@ def _get_cosine_schedule_with_warmup(optimizer, warmup_steps, total_steps):
     return LambdaLR(optimizer, lr_lambda)
 
 
+def _resolve(v):
+    """Convert a detached tensor to scalar; pass through floats unchanged."""
+    return v.item() if isinstance(v, torch.Tensor) else v
+
+
 class Trainer:
     """Training loop with AMP, TQDM logging, and checkpointing."""
 
@@ -101,17 +106,14 @@ class Trainer:
         result: Dict[str, float] = {"loss": loss.item()}
         if isinstance(self.loss_fn, QueueInfoNCE):
             result["loss_inbatch"] = loss_inbatch.item()
-            result["uniformity"] = getattr(self.loss_fn, "_last_uniformity", 0.0)
-            # Raw i2t/t2i from queue-assisted training loss
-            result["i2t_q"] = getattr(self.loss_fn, "_last_i2t", 0.0)
-            result["t2i_q"] = getattr(self.loss_fn, "_last_t2i", 0.0)
-            # Raw i2t/t2i from in-batch eval loss (no queue)
-            result["i2t_ib"] = getattr(self.eval_loss_fn, "_last_i2t", 0.0)
-            result["t2i_ib"] = getattr(self.eval_loss_fn, "_last_t2i", 0.0)
+            result["uniformity"] = _resolve(getattr(self.loss_fn, "_last_uniformity", 0.0))
+            result["i2t_q"] = _resolve(getattr(self.loss_fn, "_last_i2t", 0.0))
+            result["t2i_q"] = _resolve(getattr(self.loss_fn, "_last_t2i", 0.0))
+            result["i2t_ib"] = _resolve(getattr(self.eval_loss_fn, "_last_i2t", 0.0))
+            result["t2i_ib"] = _resolve(getattr(self.eval_loss_fn, "_last_t2i", 0.0))
         else:
-            # Raw i2t/t2i from non-queue training loss
-            result["i2t_q"] = getattr(self.loss_fn, "_last_i2t", 0.0)
-            result["t2i_q"] = getattr(self.loss_fn, "_last_t2i", 0.0)
+            result["i2t_q"] = _resolve(getattr(self.loss_fn, "_last_i2t", 0.0))
+            result["t2i_q"] = _resolve(getattr(self.loss_fn, "_last_t2i", 0.0))
         return result
 
     @torch.no_grad()
@@ -160,9 +162,11 @@ class Trainer:
         return results
 
     def save_checkpoint(self, epoch: int, val_loss: float, **extra_metrics) -> str:
+        t2i_r1 = extra_metrics.get("t2i_R@1", None)
         path = os.path.join(
             self.cfg["training"]["checkpoint_dir"],
-            f"bert_epoch{epoch:02d}_val{val_loss:.4f}.pt",
+            f"bert_epoch{epoch:02d}_t2i{t2i_r1:.1f}.pt" if t2i_r1 is not None
+            else f"bert_epoch{epoch:02d}_val{val_loss:.4f}.pt",
         )
         state = {
             "epoch": epoch,
@@ -171,6 +175,7 @@ class Trainer:
             "optimizer_state_dict": self.optimizer.state_dict(),
             "scheduler_state_dict": self.scheduler.state_dict(),
             "val_loss": val_loss,
+            "t2i_r1": t2i_r1,
             "lora_config": getattr(self.model, "lora_config", None),
         }
         if self.scaler:
@@ -194,4 +199,4 @@ class Trainer:
         self.global_step = ckpt.get("global_step", 0)
         if self.queue is not None and "queue_state" in ckpt:
             self.queue.load_state_dict(ckpt["queue_state"])
-        return ckpt["epoch"], ckpt["val_loss"]
+        return ckpt["epoch"], ckpt["val_loss"], ckpt.get("t2i_r1", None)

@@ -13,7 +13,6 @@ Prerequisites:
 """
 
 import argparse
-import math
 import os
 import sys
 from pathlib import Path
@@ -175,13 +174,16 @@ def main():
 
     # ── Resume ───────────────────────────────────────────────
     start_epoch = 1
-    best_val_loss = math.inf
+    best_t2i_r1 = -1.0
     if args.resume:
         print(f"Resuming from checkpoint: {args.resume}")
-        resumed_epoch, resumed_val_loss = trainer.load_checkpoint(args.resume)
+        resumed_epoch, resumed_val_loss, resumed_t2i = trainer.load_checkpoint(args.resume)
         start_epoch = resumed_epoch + 1
-        best_val_loss = resumed_val_loss
-        print(f"  Resumed at epoch {resumed_epoch} (val_loss={resumed_val_loss:.4f})")
+        if resumed_t2i is not None:
+            best_t2i_r1 = resumed_t2i
+            print(f"  Resumed at epoch {resumed_epoch} (best t2i_R@1={resumed_t2i:.2f})")
+        else:
+            print(f"  Resumed at epoch {resumed_epoch} (val_loss={resumed_val_loss:.4f})")
 
     # ── Training Loop (step-level validation) ──────────────
     epochs = cfg["training"]["epochs"]
@@ -237,14 +239,14 @@ def main():
                 val_loss = eval_results["val_loss"]
                 lr = trainer.optimizer.param_groups[0]["lr"]
 
-                is_best = val_loss < best_val_loss
+                is_best = eval_results.get("t2i_R@1", -1.0) > best_t2i_r1
                 if is_best:
-                    best_val_loss = val_loss
+                    best_t2i_r1 = eval_results["t2i_R@1"]
 
                 log_parts = [
                     f"Step {global_step}",
                     f"Val loss: {val_loss:.4f}",
-                    f"Best: {best_val_loss:.4f}",
+                    f"Best t2i_R@1: {best_t2i_r1:.2f}" if best_t2i_r1 > 0 else "Best: —",
                 ]
                 for key in recall_keys:
                     if key in eval_results:
@@ -267,15 +269,15 @@ def main():
         avg_queue_loss = sum(epoch_queue_losses) / len(epoch_queue_losses)
         lr = trainer.optimizer.param_groups[0]["lr"]
 
-        is_best = val_loss < best_val_loss
+        is_best = eval_results.get("t2i_R@1", -1.0) > best_t2i_r1
         if is_best:
-            best_val_loss = val_loss
+            best_t2i_r1 = eval_results["t2i_R@1"]
 
         log_parts = [
             f"Epoch {epoch:02d}/{epochs} done",
             f"Train: {avg_monitor_loss:.4f} (iLoss avg)",
             f"Val:   {val_loss:.4f}",
-            f"Best:  {best_val_loss:.4f}",
+            f"Best t2i_R@1: {best_t2i_r1:.2f}" if best_t2i_r1 > 0 else "Best: —",
         ]
         if trainer.queue is not None:
             log_parts.insert(2, f"qLoss: {avg_queue_loss:.4f}")
@@ -300,7 +302,7 @@ def main():
         print("  " + " | ".join(log_parts))
         print("-" * 60)
 
-    print(f"Training complete. Best val_loss: {best_val_loss:.4f}")
+    print(f"Training complete. Best t2i_R@1: {best_t2i_r1:.2f}")
 
 
 if __name__ == "__main__":
