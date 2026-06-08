@@ -8,17 +8,20 @@ _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # ── Checkpoint paths per model type ─────────────────────────────
 _LAION_CKPT_CANDIDATES = [
-    os.path.join(_PROJECT_ROOT, "models", "clip", "open_clip_model.safetensors"),
-    os.path.join(_PROJECT_ROOT, "models", "clip", "open_clip_pytorch_model.bin"),
+    os.path.join(_PROJECT_ROOT, "models", "deprecated_laion_clip", "open_clip_model.safetensors"),
+    os.path.join(_PROJECT_ROOT, "models", "deprecated_laion_clip", "open_clip_pytorch_model.bin"),
 ]
 
 _OPENAI_CKPT_CANDIDATES = [
+    # HF clone (converted) — preferred source
+    os.path.join(_PROJECT_ROOT, "models", "clip-vit-base-patch32", "open_clip_model.safetensors"),
+    # Legacy cached open-clip checkpoints (same weights)
     os.path.join(_PROJECT_ROOT, "models", "clip", "openai_open_clip_model.safetensors"),
     os.path.join(_PROJECT_ROOT, "models", "clip", "openai_pytorch_model.bin"),
 ]
 
 
-def _find_checkpoint(model_type: str = "laion") -> str | None:
+def _find_checkpoint(model_type: str = "openai") -> str | None:
     """Return the first existing checkpoint path for the given model type."""
     candidates = _OPENAI_CKPT_CANDIDATES if model_type == "openai" else _LAION_CKPT_CANDIDATES
     for p in candidates:
@@ -30,7 +33,7 @@ def _find_checkpoint(model_type: str = "laion") -> str | None:
 class CLIPEncoder:
     """Wrapper around open_clip ViT-B/32 for encoding scenes and text queries."""
 
-    def __init__(self, model_type: str = "laion", model_path: str = None, device: str = None):
+    def __init__(self, model_type: str = "openai", model_path: str = None, device: str = None):
         """Wrapper around open_clip ViT-B/32.
 
         Args:

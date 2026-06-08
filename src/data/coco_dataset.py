@@ -39,7 +39,7 @@ class CocoDataset(Dataset):
 
 
 def make_collate_fn(tokenizer: BertTokenizer):
-    """Returns a collate function that tokenizes captions on the fly."""
+    """Returns a collate function that tokenizes captions on the fly (BERT)."""
 
     def collate(batch):
         embs, texts, image_ids = zip(*batch)
@@ -52,6 +52,27 @@ def make_collate_fn(tokenizer: BertTokenizer):
             return_tensors="pt",
         )
         return image_emb, tokens["input_ids"], tokens["attention_mask"], list(image_ids)
+
+    return collate
+
+
+def make_clip_collate_fn(tokenizer):
+    """Returns a collate function for CLIP text encoder tokenizer.
+
+    CLIP's transformer uses causal masking internally, so attention_mask
+    is returned as a dummy all-ones tensor (accepted but ignored).
+    """
+
+    def collate(batch):
+        embs, texts, image_ids = zip(*batch)
+        image_emb = torch.stack(embs)
+        tokens = tokenizer(list(texts))
+        input_ids = tokens.clone() if isinstance(tokens, torch.Tensor) else torch.tensor(tokens, dtype=torch.long)
+        B = len(batch)
+        # Dummy attention_mask (all 1s) — CLIP ignores it, but Trainer
+        # calls .to(device) on it so it can't be None.
+        attention_mask = torch.ones(B, input_ids.size(1), dtype=torch.long)
+        return image_emb, input_ids, attention_mask, list(image_ids)
 
     return collate
 

@@ -22,8 +22,9 @@ class MixedSequenceDataset(Dataset):
 
     Each sample yields:
         frame_embs:       [K, 512] float32 torch.Tensor
+        positions:        [K, 3]   float32 (cx, cy, scale) normalised to [0,1],
+                                   or all zeros for connector sequences
         correct_caption:  str (temporally ordered, e.g. "First, a dog. Then, a cat.")
-        shuffled_caption: str (same connectors, permuted content)
     """
 
     def __init__(self, cache_dir: str, split: str = "train2017"):
@@ -42,7 +43,7 @@ class MixedSequenceDataset(Dataset):
     def __len__(self) -> int:
         return len(self.samples)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, str, str]:
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, str]:
         info = self.samples[idx]
         sid = info["id"]
 
@@ -50,10 +51,16 @@ class MixedSequenceDataset(Dataset):
         with open(self.cache_dir / f"seq_{sid:06d}.json") as f:
             meta = json.load(f)
 
+        K = embs.shape[0]
+        if "positions" in meta:
+            pos = np.array(meta["positions"], dtype=np.float32)  # [K, 3]
+        else:
+            pos = np.zeros((K, 3), dtype=np.float32)             # connector placeholder
+
         return (
-            torch.from_numpy(embs),         # [K, 512]
+            torch.from_numpy(embs),   # [K, 512]
+            torch.from_numpy(pos),    # [K, 3]
             meta["correct_caption"],
-            meta["shuffled_caption"],
         )
 
 

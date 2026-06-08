@@ -14,29 +14,31 @@ flickr:
   train_on: false
 
 clip:
-  # CLIP model variant for vision embeddings / text encoder inference.
-  model: openai              # OpenAI's ViT-B/32 (WIT-400M)
+  # Which CLIP model variant to use for vision embeddings.
+  #   laion  — open_clip ViT-B/32 trained on LAION-2B (stronger, current default)
+  #   openai — OpenAI's original ViT-B/32 trained on WIT-400M
+  model: openai
 
 # Chinese Flickr30k evaluation (cross-lingual transfer)
 flickr_zh:
-  zh_file: ../data/flickr30k/flickr_test_zh.json
+  zh_file: ./data/flickr30k/flickr_test_zh.json
 
 text_encoder:
   type: bert                # "bert" | "clip"
   # BERT options (used when type=bert)
-  bert_model_path: ./models/bert-base-uncased
+  bert_model_path: ./models/bert-base-multilingual-cased
   # CLIP options (used when type=clip)
   # CLIP's transformer uses MultiheadAttention (in_proj_weight, not
   # separate QKV), so target output projections and MLP layers.
   clip_lora:
-    enabled: false
+    enabled: true
     r: 8
     alpha: 16
     dropout: 0.1
     target_modules: ["attn.out_proj", "mlp.c_fc", "mlp.c_proj"]
 
 model:
-  bert_model_path: ./models/bert-base-uncased   # kept for backward compat
+  bert_model_path: ./models/bert-base-multilingual-cased   # kept for backward compat
   embed_dim: 512
 
 training:
@@ -46,7 +48,7 @@ training:
   weight_decay: 0.01
   temperature: 0.07     # Initial value for learnable CLIP-style logit_scale
   t2i_weight: 0.75       # >0.5 gives more weight to t2i direction (default 0.5 = symmetric)
-  uniformity_weight: 1.25  # weight for text uniformity regularizer (0 = disabled)
+  uniformity_weight: 2  # weight for text uniformity regularizer (0 = disabled)
   warmup_steps: 34536
   max_grad_norm: 1.0
   amp: true
@@ -54,7 +56,7 @@ training:
   eval_interval: 6000
   step_level_val: false
   num_workers: 16
-  checkpoint_dir: ../weights/r8_weight0.75_uniformity1.25
+  checkpoint_dir: ../weights/Multilingual_r8_weight0.75_uniformity2
 
 lora:
   enabled: true

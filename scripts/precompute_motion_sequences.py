@@ -18,8 +18,10 @@ Usage:
 
 import argparse
 import json
+import multiprocessing as mp
 import random
 import sys
+import threading
 from pathlib import Path
 
 import cv2
@@ -473,14 +475,14 @@ def _generate_motion_caption(object_class, traj_type, frames):
                     caption_parts.append(_motion_continuous_phrase(traj_type, object_class))
 
     # ── Build connectors and final captions ───────────────────────
-    style = random.choice(["index", "sequential"])
-    connectors = _build_connectors(len(caption_parts), style)
-    correct_caption = _format_caption(connectors, caption_parts)
-
     if len(caption_parts) <= 1:
-        # Nothing meaningful to shuffle
+        # Single continuous action — no connector needed
+        correct_caption = caption_parts[0] if caption_parts else ""
         shuffled_caption = correct_caption
     else:
+        style = random.choice(["index", "sequential"])
+        connectors = _build_connectors(len(caption_parts), style)
+        correct_caption = _format_caption(connectors, caption_parts)
         shuffled = list(range(len(caption_parts)))
         while shuffled == list(range(len(caption_parts))):
             random.shuffle(shuffled)
@@ -549,12 +551,16 @@ def generate_motion_frames_only(img_id, image_path, valid_classes, min_area_rati
         class_name, traj_type, frames
     )
 
+    # Normalise pixel positions to [0, 1] so they are scale-invariant
+    positions = [(cx / W, cy / H, scale) for cx, cy, scale in frames]
+
     meta = {
         "type": "motion",
         "img_id": img_id,
         "class_name": class_name,
         "trajectory": traj_type,
         "K": K,
+        "positions": positions,
     }
 
     return frame_images, correct_caption, shuffled_caption, meta
@@ -637,6 +643,7 @@ def _flush_motion_buffer(buffer, clip_encoder, next_id, out_dir,
                 "type": "motion",
                 "img_id": item["meta"]["img_id"],
                 "K": K,
+                "positions": item["meta"]["positions"],
             }, f)
 
         all_samples.append({
@@ -663,6 +670,86 @@ def _flush_motion_buffer(buffer, clip_encoder, next_id, out_dir,
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+#  Multiprocessing workers for motion generation
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _motion_worker(work_queue, result_queue, progress_queue,
+                   cfg, device_str, worker_id):
+    """Worker process: load YOLO + LaMa, generate sequences, push results.
+
+    Reads ``(img_id, image_path)`` from *work_queue*, runs the full YOLO →
+    LaMa → compositing → caption pipeline, and puts the result tuple into
+    *result_queue*.  Exits when it reads ``None`` from the work queue.
+
+    Pushes ``worker_id`` to *progress_queue* after each successful
+    sequence so the main process can render per-worker tqdm bars.
+
+    The *cfg* dict contains all configuration scalar/string parameters
+    (pickled once per worker at startup).
+    """
+    import random as _rnd
+    _rnd.seed(cfg["seed"] + worker_id * 1000)
+
+    import numpy as np
+    np.random.seed(cfg["seed"] + worker_id * 1000 + 1)
+
+    import torch
+    torch.set_num_threads(2)
+    torch.manual_seed(cfg["seed"] + worker_id * 1000 + 2)
+
+    import cv2
+    from pathlib import Path
+
+    from ultralytics import YOLO
+    from modelscope.models.cv.image_inpainting import FFTInpainting
+
+    device = torch.device(device_str)
+    yolo = YOLO(cfg["yolo_path"])
+    lama = FFTInpainting(model_dir=cfg["lama_path"]).to(device)
+    lama.eval()
+
+    valid_classes = set(cfg["valid_classes"])
+    sentinel = None  # poison pill
+
+    while True:
+        item = work_queue.get()
+        if item is sentinel:
+            break
+        img_id, image_path = item
+
+        try:
+            result = generate_motion_frames_only(
+                img_id, image_path,
+                valid_classes, cfg["min_area"], cfg["max_area"],
+                cfg["conf_thresh"], yolo, lama,
+                device, cfg["min_len"], cfg["max_len"],
+                cfg.get("inpaint_size", 256),
+            )
+            if result is not None:
+                result_queue.put(result)
+                if progress_queue is not None:
+                    progress_queue.put(worker_id)
+        except Exception as e:
+            print(f"  [Worker {worker_id}] {type(e).__name__}: {e}",
+                  file=sys.stderr, flush=True)
+            continue
+
+    del yolo, lama
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def _feed_worker(work_queue, ids_pool, image_root, id_to_file_map,
+                 count, rng_seed):
+    """Feed (img_id, image_path) items into the work queue (daemon thread)."""
+    rng = random.Random(rng_seed)
+    for _ in range(count):
+        img_id = rng.choice(ids_pool)
+        img_path = str(image_root / id_to_file_map[img_id])
+        work_queue.put((img_id, img_path))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 #  Main
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -683,6 +770,8 @@ def main():
                         help="Number of motion samples to save as images")
     parser.add_argument("--clip_batch_size", type=int, default=256,
                         help="Number of frames per batched CLIP encode call")
+    parser.add_argument("--workers", type=int, default=2,
+                        help="Number of parallel worker processes for motion generation (0/1 = sequential)")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -709,14 +798,27 @@ def main():
 
     # ── Load models ────────────────────────────────────────────────
     print(f"Device: {device}")
-    print("Loading YOLO segmentation model...")
-    from ultralytics import YOLO
-    yolo_model = YOLO(yolo_path)
 
-    print("Loading LaMa inpainting model...")
-    from modelscope.models.cv.image_inpainting import FFTInpainting
-    lama_model = FFTInpainting(model_dir=lama_path).to(device)
-    lama_model.eval()
+    import torch
+    torch.set_num_threads(4)
+
+    # With workers > 1, YOLO/LaMa run inside worker processes.
+    # Only the main process needs the CLIP encoder for batched encoding.
+    use_parallel = args.workers > 1
+
+    if not use_parallel:
+        print("Loading YOLO segmentation model...")
+        from ultralytics import YOLO
+        yolo_model = YOLO(yolo_path)
+
+        print("Loading LaMa inpainting model...")
+        from modelscope.models.cv.image_inpainting import FFTInpainting
+        lama_model = FFTInpainting(model_dir=lama_path).to(device)
+        lama_model.eval()
+    else:
+        print("  (YOLO/LaMa loaded per worker process)")
+        yolo_model = None
+        lama_model = None
 
     print("Loading CLIP encoder...")
     from clip_search.encoder import CLIPEncoder
@@ -737,6 +839,15 @@ def main():
     val_ids = [i for i in val_file if i in cached_ids]
     print(f"Train images with embeddings: {len(train_ids)}")
     print(f"Val images with embeddings:   {len(val_ids)}")
+
+    # Explicitly verify NO image overlap between train and val
+    train_set, val_set = set(train_ids), set(val_ids)
+    overlap = train_set & val_set
+    if overlap:
+        print(f"\n⚠  CRITICAL: {len(overlap)} images appear in BOTH train2017 and val2017!")
+        print(f"  Overlapping IDs: {sorted(overlap)[:20]}{' ...' if len(overlap) > 20 else ''}")
+        sys.exit(1)
+    print("  ✓ No image overlap between train2017 and val2017")
 
     # ── Generate sequences for each split ─────────────────────────
     for split, total in [
@@ -768,27 +879,84 @@ def main():
 
         # ── Motion sequences ──────────────────────────────────
         if target_motion > 0:
-            print(f"Generating {target_motion} motion sequences...")
+            print(f"Generating {target_motion} motion sequences... "
+                  f"({args.workers} worker{'s' if args.workers > 1 else ''})")
             motion_buffer = []
             motion_needed = target_motion
-            pbar = tqdm(total=motion_needed, desc="Motion")
-            attempts = 0
-            max_attempts = motion_needed * 10  # safety limit
 
-            while motion_done < motion_needed and attempts < max_attempts:
-                attempts += 1
-                img_id = random.choice(ids_pool)
-                img_path = image_root / id_to_file_map[img_id]
+            if args.workers > 1:
+                # ── Parallel path ──────────────────────────────
+                worker_cfg = {
+                    "valid_classes": list(valid_classes),
+                    "min_area": min_area,
+                    "max_area": max_area,
+                    "conf_thresh": conf_thresh,
+                    "min_len": min_len,
+                    "max_len": max_len,
+                    "inpaint_size": inpaint_size,
+                    "yolo_path": yolo_path,
+                    "lama_path": lama_path,
+                    "seed": 42,
+                }
+                ctx = mp.get_context("spawn")
+                work_queue = ctx.Queue(maxsize=args.workers * 4)
+                result_queue = ctx.Queue()
+                progress_queue = ctx.Queue()
 
-                try:
-                    result = generate_motion_frames_only(
-                        img_id, img_path, valid_classes, min_area, max_area,
-                        conf_thresh, yolo_model, lama_model,
-                        device, min_len, max_len, inpaint_size,
+                workers = [
+                    ctx.Process(target=_motion_worker,
+                                args=(work_queue, result_queue, progress_queue,
+                                      worker_cfg, device, i))
+                    for i in range(args.workers)
+                ]
+                for w in workers:
+                    w.start()
+
+                # Feeder thread: generates work items on the fly
+                feed_count = motion_needed * 5
+                feeder = threading.Thread(
+                    target=_feed_worker,
+                    args=(work_queue, ids_pool, image_root, id_to_file_map,
+                          feed_count, 43),
+                    daemon=True,
+                )
+                feeder.start()
+
+                # Per-worker progress bars (one line each, no overlap)
+                worker_progress = [0] * args.workers
+                worker_bars = [
+                    tqdm(
+                        desc=f"  Worker {i}",
+                        position=i,
+                        leave=False,
+                        unit="seq",
+                        bar_format="{desc}: {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
                     )
-                    if result is None:
-                        continue
+                    for i in range(args.workers)
+                ]
+                overall_bar = tqdm(
+                    desc="Total",
+                    position=args.workers,
+                    leave=True,
+                    unit="seq",
+                    bar_format="{desc}: {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+                )
+                overall_bar.reset(total=motion_needed)
 
+                motion_done = 0
+
+                import queue as _queue
+                while motion_done < motion_needed:
+                    # Drain progress updates so per-worker bars stay current
+                    while True:
+                        try:
+                            wid = progress_queue.get_nowait()
+                            worker_progress[wid] += 1
+                            worker_bars[wid].update(1)
+                        except _queue.Empty:
+                            break
+
+                    result = result_queue.get()
                     frame_imgs, corr_cap, shuf_cap, meta = result
                     motion_buffer.append({
                         "frame_images": frame_imgs,
@@ -798,9 +966,8 @@ def main():
                         "K": meta["K"],
                     })
                     motion_done += 1
-                    pbar.update(1)
+                    overall_bar.update(1)
 
-                    # Flush buffer when enough frames accumulated
                     total_frames = sum(item["K"] for item in motion_buffer)
                     if total_frames >= args.clip_batch_size:
                         vis_dir = cache_dir / "visualization" if split == "train2017" else None
@@ -810,21 +977,103 @@ def main():
                         )
                         motion_buffer = []
 
-                except Exception:
-                    continue
+                # Flush remaining
+                if motion_buffer:
+                    vis_dir = cache_dir / "visualization" if split == "train2017" else None
+                    next_id, vis_count = _flush_motion_buffer(
+                        motion_buffer, clip_encoder, next_id, out_dir,
+                        all_samples, vis_count, args.visualize, vis_dir,
+                    )
+                    motion_buffer = []
 
-            # Flush remaining sequences in the buffer
-            if motion_buffer:
-                vis_dir = cache_dir / "visualization" if split == "train2017" else None
-                next_id, vis_count = _flush_motion_buffer(
-                    motion_buffer, clip_encoder, next_id, out_dir,
-                    all_samples, vis_count, args.visualize, vis_dir,
-                )
-                motion_buffer = []
+                # Drain any remaining progress updates before closing bars
+                while True:
+                    try:
+                        wid = progress_queue.get_nowait()
+                        worker_progress[wid] += 1
+                        worker_bars[wid].update(1)
+                    except _queue.Empty:
+                        break
 
-            pbar.close()
-            if motion_done < motion_needed:
-                print(f"  Warning: only generated {motion_done}/{motion_needed} motion sequences")
+                # Cleanup workers
+                # Drain remaining work items so poison pills can get through
+                import queue as _q
+                for _ in range(feed_count):
+                    try:
+                        work_queue.get_nowait()
+                    except _q.Empty:
+                        break
+                for _ in workers:
+                    work_queue.put(None)
+                # Drain extra results workers produce before receiving poison,
+                # otherwise the result_queue pipe fills up → deadlock on put()
+                while any(w.is_alive() for w in workers):
+                    try:
+                        result_queue.get(timeout=0.5)
+                    except _q.Empty:
+                        pass
+                for w in workers:
+                    w.join()
+
+                for bar in worker_bars:
+                    bar.close()
+                overall_bar.close()
+
+            else:
+                # ── Sequential path ────────────────────────────
+                pbar = tqdm(total=motion_needed, desc="Motion")
+                attempts = 0
+                max_attempts = motion_needed * 10
+
+                while motion_done < motion_needed and attempts < max_attempts:
+                    attempts += 1
+                    img_id = random.choice(ids_pool)
+                    img_path = image_root / id_to_file_map[img_id]
+
+                    try:
+                        result = generate_motion_frames_only(
+                            img_id, img_path, valid_classes, min_area, max_area,
+                            conf_thresh, yolo_model, lama_model,
+                            device, min_len, max_len, inpaint_size,
+                        )
+                        if result is None:
+                            continue
+
+                        frame_imgs, corr_cap, shuf_cap, meta = result
+                        motion_buffer.append({
+                            "frame_images": frame_imgs,
+                            "correct_caption": corr_cap,
+                            "shuffled_caption": shuf_cap,
+                            "meta": meta,
+                            "K": meta["K"],
+                        })
+                        motion_done += 1
+                        pbar.update(1)
+
+                        total_frames = sum(item["K"] for item in motion_buffer)
+                        if total_frames >= args.clip_batch_size:
+                            vis_dir = cache_dir / "visualization" if split == "train2017" else None
+                            next_id, vis_count = _flush_motion_buffer(
+                                motion_buffer, clip_encoder, next_id, out_dir,
+                                all_samples, vis_count, args.visualize, vis_dir,
+                            )
+                            motion_buffer = []
+
+                    except Exception:
+                        continue
+
+                # Flush remaining
+                if motion_buffer:
+                    vis_dir = cache_dir / "visualization" if split == "train2017" else None
+                    next_id, vis_count = _flush_motion_buffer(
+                        motion_buffer, clip_encoder, next_id, out_dir,
+                        all_samples, vis_count, args.visualize, vis_dir,
+                    )
+                    motion_buffer = []
+
+                pbar.close()
+                if motion_done < motion_needed:
+                    print(f"  Warning: only generated {motion_done}/{motion_needed} motion sequences")
 
         # ── Connector sequences ───────────────────────────────
         if target_connector > 0:

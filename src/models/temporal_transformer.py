@@ -25,6 +25,13 @@ class TemporalTransformer(nn.Module):
         # Learnable positional encoding — broadcasts over batch dimension
         self.pos_encoding = nn.Parameter(torch.randn(1, max_frames, d_model) * 0.02)
 
+        # Projects per-frame (cx, cy, scale) into d_model space so it can be
+        # added as a bias, similar to positional encoding.  Small init so it
+        # doesn't overwhelm the CLIP embedding at the start of training.
+        self.pos_proj = nn.Linear(3, d_model)
+        nn.init.normal_(self.pos_proj.weight, std=0.02)
+        nn.init.zeros_(self.pos_proj.bias)
+
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=nhead,
@@ -41,14 +48,26 @@ class TemporalTransformer(nn.Module):
     def _reset_parameters(self):
         for p in self.parameters():
             if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
+                if p is not self.pos_proj.weight:
+                    nn.init.xavier_uniform_(p)
 
     def forward(
         self,
         x: torch.Tensor,
         key_padding_mask: torch.BoolTensor | None = None,
+        positions: torch.Tensor | None = None,
+        return_per_frame: bool = False,
     ) -> torch.Tensor:
-        """x: [B, T, D], key_padding_mask: [B, T] (True = padded)."""
+        """x: [B, T, D], key_padding_mask: [B, T] (True = padded).
+
+        When *positions* [B, T, 3] is given it is projected to d_model and
+        added to the input, giving the transformer explicit per-frame object
+        location information.
+
+        When *return_per_frame* is True, returns (video_emb, per_frame_outputs)
+        where per_frame_outputs is [B, T, D] (before pooling).  This is used
+        by the position-prediction reward head during training.
+        """
         B, T, D = x.shape
         if T == 0:
             raise ValueError("Empty frame sequence (T=0).")
@@ -56,8 +75,14 @@ class TemporalTransformer(nn.Module):
         # Add learnable positional encoding — slice to actual sequence length
         x = x + self.pos_encoding[:, :T, :]  # [B, T, D]
 
+        # Optionally add projected per-frame positions as an extra bias
+        if positions is not None:
+            x = x + self.pos_proj(positions)
+
         # TransformerEncoder with optional padding mask
         x = self.encoder(x, src_key_padding_mask=key_padding_mask)  # [B, T, D]
+
+        per_frame = x  # save before pooling
 
         # Masked mean pool over valid positions
         if key_padding_mask is not None:
@@ -66,4 +91,8 @@ class TemporalTransformer(nn.Module):
         else:
             x = x.mean(dim=1)  # [B, D]
 
-        return F.normalize(x, dim=-1)
+        video_emb = F.normalize(x, dim=-1)
+
+        if return_per_frame:
+            return video_emb, per_frame
+        return video_emb

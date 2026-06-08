@@ -7,20 +7,22 @@ aggregates per-frame CLIP embeddings into a single video embedding, and the froz
 BERT provides the corresponding text embedding.
 
 Loss functions:
-  * OrderConsistency — triplet margin: sim(video, correct_text) must exceed
-    sim(video, shuffled_text) by at least a margin.
-  * AnchorMSE — lightweight MSE between the video embedding and mean-pooled
-    frame embeddings, keeping the temporal transformer output anchored in
+  * SymmetricInfoNCE — contrastive alignment between video_emb and text_emb.
+  * PositionPredictionReward — frame-level MSE on (cx, cy, scale) for motion
+    samples (the "RL reward" that teaches temporal understanding).
+  * AnchorMSE — light regulariser that keeps the video embedding anchored in
     CLIP embedding space.
 
 Prerequisites:
   1. Run scripts/precompute_embeddings.py first (generates .npy files)
-  2. A trained BERT checkpoint from train_bert.py
+  2. Run scripts/precompute_motion_sequences.py (generates motion data)
+  3. A trained BERT checkpoint from train_bert.py
 
 Usage:
     python scripts/train_temporal.py \\
         --bert_checkpoint checkpoints/bert_best.pt \\
-        --config config/default.yaml
+        --config config/default3_temporal.yaml \\
+        --use_motion
 """
 
 import argparse
@@ -38,7 +40,7 @@ from transformers import BertTokenizer
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.models import BertEncoder, TemporalTransformer
 from src.data import get_sequence_dataloader, get_mixed_dataloader
-from src.training import OrderConsistencyLoss
+from src.training import SymmetricInfoNCE, PositionPredictionReward
 from src.training.trainer import _get_cosine_schedule_with_warmup
 
 
@@ -105,31 +107,39 @@ def _build_optimizer(temporal, weight_decay, t_cfg):
 def _train_step(batch, temporal, text_encoder, losses,
                 device, scaler, optimizer, max_grad_norm):
     """Execute one forward/backward pass.  Returns dict of per-component losses."""
-    frame_embs, frame_mask, corr_ids, corr_mask, wrong_ids, wrong_mask = batch
+    frame_embs, frame_mask, corr_ids, corr_mask, positions, pos_mask = batch
     frame_embs = frame_embs.to(device)
     frame_mask = frame_mask.to(device)
     corr_mask = corr_mask.to(device)
-    wrong_mask = wrong_mask.to(device)
+    positions = positions.to(device)
+    pos_mask = pos_mask.to(device)
 
     # ── Forward ──────────────────────────────────────────────────
     def _forward():
-        video_emb = temporal(frame_embs, frame_mask)                # [B, 512]
+        video_emb, per_frame = temporal(
+            frame_embs, frame_mask,
+            positions=positions, return_per_frame=True,
+        )
 
         correct_emb = text_encoder(corr_ids.to(device), corr_mask)   # [B, 512]
-        wrong_emb = text_encoder(wrong_ids.to(device), wrong_mask)   # [B, 512]
 
-        # Order consistency: triplet margin on correct vs shuffled order
-        order = losses["order"](video_emb, correct_emb, wrong_emb)
+        # Symmetric InfoNCE: align video_emb ↔ correct_text_emb
+        sNCE = losses["sNCE"](video_emb, correct_emb)
 
-        # Anchoring loss: MSE between video_emb and mean-pooled frame embeddings
-        # This keeps the video embedding anchored in CLIP space.
+        # Position prediction reward: only motion frames contribute
+        pos_reward = losses["pos_reward"](per_frame, positions, pos_mask)
+
+        # Anchoring loss: keep video_emb near mean-pooled frame embeddings
+        # This prevents the video embedding from drifting too far from CLIP space.
         valid = (~frame_mask).unsqueeze(-1).float()      # [B, T, 1], 1=valid
         frame_mean = (frame_embs * valid).sum(dim=1) / valid.sum(dim=1).clamp(min=1)
         frame_mean = F.normalize(frame_mean, dim=-1)     # [B, 512]
         anchor_mse = F.mse_loss(video_emb, frame_mean.detach())
 
-        total = losses["order_w"] * order + losses["anchor_w"] * anchor_mse
-        return total, {"order": order, "anchor_mse": anchor_mse}
+        total = (losses["sNCE_w"] * sNCE
+                 + losses["pos_w"] * pos_reward
+                 + losses["anchor_w"] * anchor_mse)
+        return total, {"sNCE": sNCE, "pos_reward": pos_reward, "anchor_mse": anchor_mse}
 
     if scaler:
         with torch.amp.autocast("cuda"):
@@ -154,28 +164,36 @@ def _train_step(batch, temporal, text_encoder, losses,
 # ═══════════════════════════════════════════════════════════════════════════
 
 @torch.no_grad()
-def evaluate(temporal, text_encoder, loader, losses, device, use_amp):
-    """Epoch-end validation. Returns dict of average loss components."""
+def evaluate(temporal, text_encoder, loader, sNCE_fn, pos_reward_fn, device, use_amp):
+    """Epoch-end validation. Returns dict of average sNCE and pos MSE losses."""
     temporal.eval()
     text_encoder.eval()
-    totals = {"order": 0.0}
+    sNCE_total = 0.0
+    pos_total = 0.0
+    count = 0
 
     for batch in tqdm(loader, desc="Val", leave=False):
-        frame_embs, frame_mask, corr_ids, corr_mask, wrong_ids, wrong_mask = batch
+        frame_embs, frame_mask, corr_ids, corr_mask, positions, pos_mask = batch
         frame_embs = frame_embs.to(device)
         frame_mask = frame_mask.to(device)
         corr_mask = corr_mask.to(device)
-        wrong_mask = wrong_mask.to(device)
+        positions = positions.to(device)
+        pos_mask = pos_mask.to(device)
 
-        with torch.amp.autocast("cuda") if use_amp else nullcontext():
-            video_emb = temporal(frame_embs, frame_mask)
+        ctx = torch.amp.autocast("cuda") if use_amp else nullcontext()
+        with ctx:
+            video_emb, per_frame = temporal(
+                frame_embs, frame_mask, positions=positions, return_per_frame=True,
+            )
             correct_emb = text_encoder(corr_ids.to(device), corr_mask)
-            wrong_emb = text_encoder(wrong_ids.to(device), wrong_mask)
+            sNCE_loss = sNCE_fn(video_emb, correct_emb)
+            pos_loss = pos_reward_fn(per_frame, positions, pos_mask)
 
-        totals["order"] += losses["order"](video_emb, correct_emb, wrong_emb).item()
+        sNCE_total += sNCE_loss.item()
+        pos_total += pos_loss.item()
+        count += 1
 
-    N = len(loader)
-    return {k: v / N for k, v in totals.items()}
+    return {"sNCE": sNCE_total / count, "pos": pos_total / count}
 
 
 class nullcontext:
@@ -271,31 +289,29 @@ def main():
     # ── Data loaders ──────────────────────────────────────────────
     print("Loading data...")
     if args.use_motion:
-        motion_cache = args.motion_cache or cfg.get("motion", {}).get("cache_dir", "data/coco/mixed_sequences")
+        motion_cache = args.motion_cache or cfg.get("motion", {}).get("cache_dir",
+                                                                       "data/coco/mixed_sequences")
         print(f"  Using mixed-sequence cache: {motion_cache}")
         if not Path(motion_cache, "train2017", "samples.json").exists():
             print(f"ERROR: No precomputed sequences found at {motion_cache}.")
             print("Run scripts/precompute_motion_sequences.py first.")
             sys.exit(1)
+        batch_size = cfg["training"]["batch_size"]
+        num_workers = cfg["training"]["num_workers"]
         train_loader = get_mixed_dataloader(
             motion_cache, "train2017", tokenizer,
-            batch_size=cfg["training"]["batch_size"],
-            shuffle=True,
-            num_workers=cfg["training"]["num_workers"],
+            batch_size=batch_size, shuffle=True, num_workers=num_workers,
         )
         val_loader = get_mixed_dataloader(
             motion_cache, "val2017", tokenizer,
-            batch_size=cfg["training"]["batch_size"],
-            shuffle=False,
-            num_workers=cfg["training"]["num_workers"],
+            batch_size=batch_size, shuffle=False, num_workers=num_workers,
         )
     else:
         train_loader = get_sequence_dataloader(
             coco_root, "train2017", cache_dir, tokenizer,
             annotations_dir=ann_dir,
             batch_size=cfg["training"]["batch_size"],
-            shuffle=True,
-            num_workers=cfg["training"]["num_workers"],
+            shuffle=True, num_workers=cfg["training"]["num_workers"],
             min_len=t_cfg.get("sequence_min_len", 3),
             max_len=t_cfg.get("sequence_max_len", 10),
         )
@@ -303,8 +319,7 @@ def main():
             coco_root, "val2017", cache_dir, tokenizer,
             annotations_dir=ann_dir,
             batch_size=cfg["training"]["batch_size"],
-            shuffle=False,
-            num_workers=cfg["training"]["num_workers"],
+            shuffle=False, num_workers=cfg["training"]["num_workers"],
             min_len=t_cfg.get("sequence_min_len", 3),
             max_len=t_cfg.get("sequence_max_len", 10),
         )
@@ -315,19 +330,20 @@ def main():
     optimizer = _build_optimizer(temporal, cfg["training"]["weight_decay"], t_cfg)
 
     # ── Losses ────────────────────────────────────────────────────
-    order_loss_fn = OrderConsistencyLoss(
-        margin=t_cfg.get("order_consistency_margin", 0.2)
-    )
+    sNCE_fn = SymmetricInfoNCE(temperature=cfg["training"]["temperature"])
+    pos_reward_fn = PositionPredictionReward(d_model=t_cfg.get("d_model", 512)).to(device)
     losses = {
-        "order": order_loss_fn,
-        "order_w": t_cfg.get("order_consistency_weight", 0.5),
-        "anchor_w": t_cfg.get("anchor_mse_weight", 1.0),
+        "sNCE": sNCE_fn,
+        "pos_reward": pos_reward_fn,
+        "sNCE_w": t_cfg.get("order_consistency_weight", 1.0),
+        "pos_w": t_cfg.get("position_prediction_weight", 0.1),
+        "anchor_w": t_cfg.get("anchor_mse_weight", 0.05),
     }
 
     # ── Scheduler ─────────────────────────────────────────────────
     epochs = cfg["training"]["epochs"]
     total_steps = len(train_loader) * epochs
-    warmup = cfg["training"]["warmup_steps"]
+    warmup = t_cfg.get("temporal_warmup", cfg["training"].get("warmup_steps", 0))
     scheduler = _get_cosine_schedule_with_warmup(optimizer, warmup, total_steps)
 
     # ── AMP ───────────────────────────────────────────────────────
@@ -363,7 +379,9 @@ def main():
 
     print(f"\nTraining: {epochs} epochs, {warmup} warmup steps, cosine decay")
     print(f"  Temporal LR: {t_cfg.get('temporal_lr', 1e-4)} (frozen BERT)")
-    print(f"  Losses: OrderConsistency + {losses['anchor_w']}×AnchorMSE")
+    print(f"  Losses: {losses['sNCE_w']}×SymmetricInfoNCE + "
+          f"{losses['pos_w']}×PositionPrediction + "
+          f"{losses['anchor_w']}×AnchorMSE")
     print(f"  Save best + every 5 epochs")
     print("-" * 60)
 
@@ -379,32 +397,37 @@ def main():
             )
             scheduler.step()
             global_step += 1
+            total_loss = (losses["sNCE_w"] * result["sNCE"]
+                          + losses["pos_w"] * result["pos_reward"]
+                          + losses["anchor_w"] * result["anchor_mse"])
             pbar.set_postfix(
-                loss=f"{losses['order_w'] * result['order'] + losses['anchor_w'] * result['anchor_mse']:.4f}",
-                order=f"{result['order']:.4f}",
+                loss=f"{total_loss:.4f}",
+                sNCE=f"{result['sNCE']:.4f}",
+                pos=f"{result['pos_reward']:.4f}",
                 anchor=f"{result['anchor_mse']:.4f}",
             )
 
         # ── End-of-epoch validation ──────────────────────────
         val_metrics = evaluate(
-            temporal, text_encoder, val_loader, losses, device, use_amp,
+            temporal, text_encoder, val_loader, sNCE_fn, pos_reward_fn, device, use_amp,
         )
         lr = optimizer.param_groups[0]["lr"]
-        val_order = val_metrics["order"]
-        is_best = val_order < best_val_loss
+        val_snce = val_metrics["sNCE"]
+        val_pos = val_metrics["pos"]
+        is_best = val_snce < best_val_loss
         if is_best:
-            best_val_loss = val_order
+            best_val_loss = val_snce
 
         log = (
             f"Epoch {epoch:02d}/{epochs} done  |  "
-            f"Val Order: {val_order:.4f}  |  "
-            f"Best Order: {best_val_loss:.4f}  |  LR: {lr:.2e}"
+            f"Val sNCE: {val_snce:.4f}  |  Val pos: {val_pos:.4f}  |  "
+            f"Best sNCE: {best_val_loss:.4f}  |  LR: {lr:.2e}"
         )
 
         # Save (best always, otherwise every 5 epochs)
         if is_best or epoch % 5 == 0:
             ckpt_path = _save_checkpoint(
-                ckpt_dir, epoch, val_order,
+                ckpt_dir, epoch, val_snce,
                 temporal, optimizer, scheduler, scaler, global_step,
             )
             suffix = f"  → {Path(ckpt_path).name}"

@@ -20,6 +20,7 @@ def build_combined_val_loader(
     tokenizer: BertTokenizer,
     batch_size: int = 64,
     num_workers: int = 4,
+    collate_fn=None,
 ) -> DataLoader:
     """Create a DataLoader that evaluates on COCO val2017 + Flickr30k test combined.
 
@@ -61,12 +62,13 @@ def build_combined_val_loader(
     combined = ConcatDataset(datasets)
     print(f"  Combined val set: {len(combined):,} captions total")
 
+    _collate_fn = collate_fn or make_collate_fn(tokenizer)
     return DataLoader(
         combined,
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        collate_fn=make_collate_fn(tokenizer),
+        collate_fn=_collate_fn,
         pin_memory=True,
     )
 
@@ -76,6 +78,7 @@ def build_split_loaders(
     tokenizer: BertTokenizer,
     batch_size: int = 64,
     num_workers: int = 4,
+    collate_fn=None,
 ) -> dict:
     """Build separate DataLoaders for each validation split.
 
@@ -88,6 +91,7 @@ def build_split_loaders(
 
     Useful for per-dataset breakdown in standalone eval scripts.
     """
+    _collate_fn = collate_fn or make_collate_fn(tokenizer)
     loaders = {}
 
     # COCO val2017
@@ -100,7 +104,7 @@ def build_split_loaders(
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        collate_fn=make_collate_fn(tokenizer),
+        collate_fn=_collate_fn,
         pin_memory=True,
     )
 
@@ -120,7 +124,7 @@ def build_split_loaders(
                 batch_size=batch_size,
                 shuffle=False,
                 num_workers=num_workers,
-                collate_fn=make_collate_fn(tokenizer),
+                collate_fn=_collate_fn,
                 pin_memory=True,
             )
 

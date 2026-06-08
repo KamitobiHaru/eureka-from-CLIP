@@ -23,6 +23,7 @@ from transformers import BertTokenizer
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.data.eval_dataset import build_split_loaders, build_combined_val_loader
+from src.data import make_clip_collate_fn
 from src.models import BertEncoder
 from src.training import SymmetricInfoNCE
 from src.training.evaluation import compute_recall_metrics
@@ -156,14 +157,34 @@ def main():
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
-    # ── Model ────────────────────────────────────────────
-    bert_path = cfg["model"]["bert_model_path"]
-    lora_cfg = cfg.get("lora", {})
-    model = BertEncoder(
-        model_path=bert_path,
-        embed_dim=cfg["model"]["embed_dim"],
-        lora_cfg=lora_cfg,
-    ).to(device)
+    # ── Model + Tokenizer ────────────────────────────────
+    te_cfg = cfg.get("text_encoder", {})
+    encoder_type = te_cfg.get("type", "bert")
+
+    if encoder_type == "clip":
+        from src.models.clip_text_encoder import CLIPTextEncoder
+        import open_clip
+        clip_lora = te_cfg.get("clip_lora", {})
+        clip_model_type = cfg.get("clip", {}).get("model", "openai")
+        print(f"Loading CLIP text encoder ({clip_model_type})...")
+        model = CLIPTextEncoder(
+            device=device, lora_cfg=clip_lora,
+            model_type=clip_model_type,
+        ).to(device)
+        tokenizer = open_clip.get_tokenizer("ViT-B-32")
+    else:
+        bert_path = (
+            te_cfg.get("bert_model_path")
+            or cfg["model"].get("bert_model_path")
+        )
+        lora_cfg = cfg.get("lora", {})
+        print("Loading BERT model...")
+        model = BertEncoder(
+            model_path=bert_path,
+            embed_dim=cfg["model"]["embed_dim"],
+            lora_cfg=lora_cfg,
+        ).to(device)
+        tokenizer = BertTokenizer.from_pretrained(bert_path, local_files_only=True)
 
     # ── Load checkpoint ──────────────────────────────────
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=True)
@@ -171,14 +192,15 @@ def main():
     epoch = ckpt.get("epoch", "?")
     print(f"Loaded checkpoint: {Path(args.checkpoint).name} (epoch {epoch})")
 
-    # ── Tokenizer ────────────────────────────────────────
-    tokenizer = BertTokenizer.from_pretrained(bert_path, local_files_only=True)
-
     # ── CLIP-style per-dataset evaluation ─────────────────
     batch_size = cfg["training"]["batch_size"]
     num_workers = cfg["training"]["num_workers"]
     temperature = cfg["training"]["temperature"]
-    split_loaders = build_split_loaders(cfg, tokenizer, batch_size, num_workers)
+    eval_collate = make_clip_collate_fn(tokenizer) if encoder_type == "clip" else None
+    split_loaders = build_split_loaders(
+        cfg, tokenizer, batch_size, num_workers,
+        collate_fn=eval_collate,
+    )
 
     if "flickr" in split_loaders and split_loaders["flickr"] is not None:
         flickr_results = evaluate_loader(model, split_loaders["flickr"], device, temperature)
@@ -189,7 +211,10 @@ def main():
 
     # ── Combined evaluation (COCO + Flickr) ──────────────
     print("\n--- Combined Evaluation ---")
-    combined_loader = build_combined_val_loader(cfg, tokenizer, batch_size, num_workers)
+    combined_loader = build_combined_val_loader(
+        cfg, tokenizer, batch_size, num_workers,
+        collate_fn=eval_collate,
+    )
     combined_results = evaluate_loader(model, combined_loader, device, temperature)
     print("  " + format_results(combined_results, prefix="Combined"))
     print("Done.")

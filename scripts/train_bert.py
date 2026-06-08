@@ -25,10 +25,15 @@ from transformers import BertTokenizer
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.models import BertEncoder
-from src.data import CocoDataset, FlickrDataset, make_collate_fn
+from src.data import (
+    CocoDataset, FlickrDataset,
+    make_collate_fn, make_clip_collate_fn,
+)
 from src.training import (
     SymmetricInfoNCE, QueueInfoNCE, Trainer, ContrastiveQueue,
 )
+from src.training.evaluation import compute_recall_metrics
+from scripts.evaluate_multilingual import _compute_median_rank
 
 
 def main():
@@ -49,24 +54,47 @@ def main():
     print(f"Device: {device}")
     print(f"Config: {args.config}")
 
-    # ── Model ────────────────────────────────────────────────
-    bert_path = cfg["model"]["bert_model_path"]
-    if not os.path.isdir(bert_path):
-        print(f"BERT model not found at {bert_path}")
-        print("Run the download script first: bash scripts/download_bert.sh")
-        sys.exit(1)
+    # ── Model + Tokenizer ────────────────────────────────────
+    te_cfg = cfg.get("text_encoder", {})
+    encoder_type = te_cfg.get("type", "bert")
 
-    lora_cfg = cfg.get("lora", {})
-    print("Loading BERT model...")
-    model = BertEncoder(
-        model_path=bert_path,
-        embed_dim=cfg["model"]["embed_dim"],
-        lora_cfg=lora_cfg,
-        initial_temperature=cfg["training"]["temperature"],
-    ).to(device)
+    if encoder_type == "clip":
+        # ── CLIP text encoder + optional LoRA ────────────
+        from src.models.clip_text_encoder import CLIPTextEncoder
+        import open_clip
 
-    # ── Tokenizer ────────────────────────────────────────────
-    tokenizer = BertTokenizer.from_pretrained(bert_path, local_files_only=True)
+        clip_lora = te_cfg.get("clip_lora", {})
+        clip_model_type = cfg.get("clip", {}).get("model", "openai")
+        print(f"Loading CLIP text encoder ({clip_model_type})...")
+        model = CLIPTextEncoder(
+            device=device, lora_cfg=clip_lora,
+            model_type=clip_model_type,
+        ).to(device)
+
+        tokenizer = open_clip.get_tokenizer("ViT-B-32")
+        collate_fn = make_clip_collate_fn(tokenizer)
+    else:
+        # ── BERT text encoder ────────────────────────────
+        bert_path = (
+            te_cfg.get("bert_model_path")
+            or cfg["model"].get("bert_model_path")
+        )
+        if not bert_path or not os.path.isdir(bert_path):
+            print(f"BERT model not found at {bert_path}")
+            print("Run the download script first: bash scripts/download_bert.sh")
+            sys.exit(1)
+
+        lora_cfg = cfg.get("lora", {})
+        print("Loading BERT model...")
+        model = BertEncoder(
+            model_path=bert_path,
+            embed_dim=cfg["model"]["embed_dim"],
+            lora_cfg=lora_cfg,
+            initial_temperature=cfg["training"]["temperature"],
+        ).to(device)
+
+        tokenizer = BertTokenizer.from_pretrained(bert_path, local_files_only=True)
+        collate_fn = make_collate_fn(tokenizer)
 
     # ── Data ─────────────────────────────────────────────────
     coco_cache = cfg["data"]["embedding_cache"]
@@ -99,7 +127,6 @@ def main():
         print(f"  Flickr train: {len(flickr_train):,} pairs")
 
     train_dataset = ConcatDataset(datasets_train)
-    collate_fn = make_collate_fn(tokenizer)
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=cfg["training"]["batch_size"],
@@ -137,6 +164,31 @@ def main():
     )
     print(f"  Train: {len(train_dataset):,} pairs  ({'+'.join(str(len(d)) for d in datasets_train)})")
     print(f"  Val:   {len(val_dataset):,} captions  ({val_label})")
+
+    # ── Chinese Flickr30k validation (cross-lingual) ──────────
+    zh_loader = None
+    zh_flickr_cfg = cfg.get("flickr_zh", {})
+    if zh_flickr_cfg.get("zh_file"):
+        zh_rel = zh_flickr_cfg["zh_file"]
+        # Resolve relative to config location (train_bert.py runs from project root)
+        zh_abs = Path(zh_rel).resolve()
+        if zh_abs.exists():
+            from src.data.flickr_zh_dataset import FlickrZhDataset
+            zh_dataset = FlickrZhDataset(
+                flickr_cfg["root"], "test",
+                flickr_cfg["embedding_cache"],
+                zh_file=str(zh_abs),
+                annotation_file=flickr_cfg.get("annotation_file", "flickr_annotations_30k.csv"),
+            )
+            zh_loader = torch.utils.data.DataLoader(
+                zh_dataset,
+                batch_size=cfg["training"]["batch_size"],
+                shuffle=False,
+                num_workers=cfg["training"]["num_workers"],
+                collate_fn=collate_fn,
+                pin_memory=True,
+            )
+            print(f"  Zh-Val: {len(zh_dataset):,} Chinese captions ({zh_abs.name})")
 
     # ── Queue & Loss ─────────────────────────────────────
     queue_max_size = cfg.get("queue", {}).get("max_size", 0)
@@ -186,6 +238,35 @@ def main():
             print(f"  Resumed at epoch {resumed_epoch} (best t2i_R@1={resumed_t2i:.2f})")
         else:
             print(f"  Resumed at epoch {resumed_epoch} (val_loss={resumed_val_loss:.4f})")
+
+    # ── Chinese Flickr30k evaluation helper ────────────────
+    @torch.no_grad()
+    def _evaluate_zh(model, loader, device, temperature):
+        """Evaluate on Chinese Flickr30k, return recall dict."""
+        model.eval()
+        loss_fn = SymmetricInfoNCE(temperature=temperature)
+        all_img = []
+        all_txt = []
+        all_ids = []
+        for batch in tqdm(loader, desc="Zh-Val", leave=False):
+            img, input_ids, attn_mask, *rest = batch
+            img_ids = rest[0] if rest else None
+            img = img.to(device)
+            input_ids = input_ids.to(device)
+            attn_mask = attn_mask.to(device)
+            txt = model(input_ids, attn_mask)
+            all_img.append(img.cpu())
+            all_txt.append(txt.cpu())
+            if img_ids:
+                all_ids.extend(img_ids)
+        if not all_ids:
+            return {}
+        img_embs = torch.cat(all_img)
+        txt_embs = torch.cat(all_txt)
+        recall = compute_recall_metrics(img_embs, txt_embs, all_ids, ks=(1, 5, 10))
+        recall["i2t_medR"] = _compute_median_rank(img_embs, txt_embs, all_ids, "i2t")
+        recall["t2i_medR"] = _compute_median_rank(img_embs, txt_embs, all_ids, "t2i")
+        return recall
 
     # ── Training Loop (step-level validation) ──────────────
     epochs = cfg["training"]["epochs"]
@@ -271,6 +352,12 @@ def main():
         avg_queue_loss = sum(epoch_queue_losses) / len(epoch_queue_losses)
         lr = trainer.optimizer.param_groups[0]["lr"]
 
+        # ── Chinese Flickr30k evaluation ──────────────────────
+        zh_results = {}
+        if zh_loader is not None:
+            zh_results = _evaluate_zh(trainer.model, zh_loader, trainer.device,
+                                      cfg["training"]["temperature"])
+
         is_best = eval_results.get("t2i_R@1", -1.0) > best_t2i_r1
         if is_best:
             best_t2i_r1 = eval_results["t2i_R@1"]
@@ -286,9 +373,16 @@ def main():
         if epoch_uniform_vals:
             avg_uniform = sum(epoch_uniform_vals) / len(epoch_uniform_vals)
             log_parts.insert(3, f"U: {avg_uniform:.4f}")
+        # English Flickr recall
         for key in recall_keys:
             if key in eval_results:
                 log_parts.append(f"{key}: {eval_results[key]:.2f}")
+        # Chinese Flickr recall (if available)
+        if zh_results:
+            for key in recall_keys:
+                v = zh_results.get(key)
+                if v is not None:
+                    log_parts.append(f"ZH_{key}: {v:.2f}")
         log_parts.append(f"LR: {lr:.2e}")
 
         if is_best or epoch % 5 == 0:

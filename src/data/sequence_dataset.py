@@ -103,13 +103,20 @@ class SequenceDataset(Dataset):
     def __len__(self) -> int:
         return len(self.img_ids)  # number of unique images
 
-    def __getitem__(self, _idx: int) -> Tuple[torch.Tensor, str, str]:
-        """Return (frame_embs, correct_caption, shuffled_caption)."""
+    def __getitem__(self, _idx: int) -> Tuple[torch.Tensor, torch.Tensor, str]:
+        """Return (frame_embs, positions, correct_caption).
+
+        Positions are zeros (no motion data) — the temporal training script
+        masks the position loss for non-motion samples via pos_mask.
+        """
         K = random.randint(self.min_len, self.max_len)
         sampled = random.sample(self.img_ids, K)
 
         # Frame embeddings in sampled order → [K, 512]
         frame_embs = torch.from_numpy(np.stack([self._embeddings[i] for i in sampled]))
+
+        # Placeholder positions (all zeros) — no motion data for this dataset
+        positions = torch.zeros(K, 3)
 
         # One caption per image
         captions = [random.choice(self.img_to_captions[i]) for i in sampled]
@@ -121,27 +128,22 @@ class SequenceDataset(Dataset):
         # -- Correct caption: captions in image order --
         correct_caption = _format_caption(connectors, captions)
 
-        # -- Shuffled caption: permute captions, use same connectors --
-        shuffled = list(range(K))
-        while shuffled == list(range(K)):
-            random.shuffle(shuffled)
-        shuffled_captions = [captions[i] for i in shuffled]
-        shuffled_caption = _format_caption(connectors, shuffled_captions)
-
-        return frame_embs, correct_caption, shuffled_caption
+        return frame_embs, positions, correct_caption
 
 
 # ── Collate ───────────────────────────────────────────────────────────
 
 def sequence_collate_fn(tokenizer, max_text_len: int = 77):
-    """Return a collate function for SequenceDataset batches.
+    """Return a collate function for temporal sequence batches.
 
-    Pads variable-length frame sequences to [B, max_T, 512] and tokenizes
-    both correct and shuffled captions with a BERT-style tokenizer.
+    Expects each dataset element as ``(frame_embs, positions, correct_text)``
+    where ``frame_embs`` is [K, 512], ``positions`` is [K, 3] (cx, cy, scale
+    normalised to [0,1], all-zero for non-motion samples), and ``correct_text``
+    is the temporally ordered caption.
     """
 
     def collate(batch):
-        frame_embs, correct_texts, shuffled_texts = zip(*batch)
+        frame_embs, positions, correct_texts = zip(*batch)
 
         # Pad frame embeddings
         lengths = [e.size(0) for e in frame_embs]
@@ -149,10 +151,16 @@ def sequence_collate_fn(tokenizer, max_text_len: int = 77):
         B = len(batch)
         padded = torch.zeros(B, max_T, frame_embs[0].size(-1), dtype=torch.float32)
         mask = torch.ones(B, max_T, dtype=torch.bool)  # True = padding
+        pos_padded = torch.zeros(B, max_T, 3, dtype=torch.float32)
 
-        for i, (emb, L) in enumerate(zip(frame_embs, lengths)):
+        for i, (emb, pos, L) in enumerate(zip(frame_embs, positions, lengths)):
             padded[i, :L] = emb
-            mask[i, :L] = False  # valid positions
+            mask[i, :L] = False
+            pos_padded[i, :L] = pos
+
+        # Position mask: True for frames where real position data exists
+        # (connector / original sequences have all-zero placeholder positions)
+        pos_mask = (pos_padded.abs().sum(dim=-1) > 1e-8) & ~mask  # [B, max_T]
 
         correct_tokens = tokenizer(
             list(correct_texts),
@@ -161,20 +169,13 @@ def sequence_collate_fn(tokenizer, max_text_len: int = 77):
             max_length=max_text_len,
             return_tensors="pt",
         )
-        shuffled_tokens = tokenizer(
-            list(shuffled_texts),
-            padding=True,
-            truncation=True,
-            max_length=max_text_len,
-            return_tensors="pt",
-        )
         return (
-            padded,               # [B, max_T, 512]
-            mask,                 # [B, max_T]  True=padding
+            padded,                       # [B, max_T, 512]
+            mask,                         # [B, max_T]  True=padding
             correct_tokens["input_ids"],
             correct_tokens["attention_mask"],
-            shuffled_tokens["input_ids"],
-            shuffled_tokens["attention_mask"],
+            pos_padded,                   # [B, max_T, 3]
+            pos_mask,                     # [B, max_T]  True=valid position
         )
 
     return collate
