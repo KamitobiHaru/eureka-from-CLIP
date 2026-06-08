@@ -1,7 +1,7 @@
 import csv
 import json
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -30,6 +30,7 @@ class FlickrDataset(Dataset):
         split: str,
         embedding_cache: str,
         annotation_file: str = "flickr_annotations_30k.csv",
+        text_cache_dir: Optional[str] = None,
     ):
         self.embedding_cache = Path(embedding_cache)
 
@@ -48,13 +49,26 @@ class FlickrDataset(Dataset):
             for cap in captions:
                 self.pairs.append((stem, cap))
 
+        # Precomputed text embeddings (optional)
+        self.text_embs: Optional[torch.Tensor] = None
+        if text_cache_dir is not None:
+            text_path = Path(text_cache_dir) / f"flickr_{split}.pt"
+            self.text_embs = torch.load(text_path, weights_only=True)
+            if len(self.text_embs) != len(self.pairs):
+                raise ValueError(
+                    f"Text embedding count ({len(self.text_embs)}) "
+                    f"doesn't match dataset size ({len(self.pairs)}) for {split}"
+                )
+
     def __len__(self) -> int:
         return len(self.pairs)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, str, str]:
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, Union[torch.Tensor, str], str]:
         stem, caption = self.pairs[idx]
         emb_path = self.embedding_cache / f"{stem}.npy"
         emb = np.load(emb_path)
+        if self.text_embs is not None:
+            return torch.from_numpy(emb).float(), self.text_embs[idx], f"flickr_{stem}"
         return torch.from_numpy(emb).float(), caption, f"flickr_{stem}"
 
 
