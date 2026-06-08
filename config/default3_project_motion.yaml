@@ -1,0 +1,60 @@
+# Phase-2 temporal fine-tuning on motion sequences.
+# Uses SymmetricInfoNCE + PositionPredictionReward + AnchorMSE.
+# LR is passed via --lr CLI (default 1e-5), not from config.
+
+data:
+  coco_root: ./dataset_annotation
+  annotations_dir: annotations_trainval2017/annotations
+  embedding_cache: ./data/coco/clip_embeddings
+
+flickr:
+  root: ./dataset_annotation
+  annotation_file: flickr_annotations_30k.csv
+  embedding_cache: ./data/flickr30k/clip_embeddings
+
+model:
+  bert_model_path: ./models/bert-base-uncased
+  embed_dim: 512
+
+training:
+  batch_size: 64
+  epochs: 30
+  lr: 0.0003
+  weight_decay: 0.01
+  temperature: 0.07
+  max_grad_norm: 1.0
+  amp: true
+  num_workers: 16
+  checkpoint_dir: ../weights/bert_temporal_motion_30
+lora:
+  enabled: false
+
+temporal:
+  d_model: 512
+  nhead: 8
+  num_layers: 2
+  dim_feedforward: 1024
+  dropout: 0.1
+  max_frames: 16
+
+  sequence_min_len: 3
+  sequence_max_len: 10
+
+  order_consistency_weight: 1.0
+  position_prediction_weight: 0.5
+  anchor_mse_weight: 10.0
+
+  pos_warmup:
+    start_epoch: 1        # ramp up from epoch 1
+    steps: 500
+    rate: 1.0
+
+  temporal_lr: 0.000001
+  temporal_warmup: 500
+
+motion:
+  cache_dir: ./data/coco/mixed_sequences
+
+queue:
+  max_size: 49152
+  mask_stale_texts: false

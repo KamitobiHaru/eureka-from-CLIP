@@ -239,11 +239,11 @@ def main():
     best_t2i_r1 = -1.0
     if args.resume:
         print(f"Resuming from checkpoint: {args.resume}")
-        resumed_epoch, resumed_val_loss, resumed_t2i = trainer.load_checkpoint(args.resume)
+        resumed_epoch, resumed_val_loss, resumed_t2i, resumed_best = trainer.load_checkpoint(args.resume)
         start_epoch = resumed_epoch + 1
         if resumed_t2i is not None:
-            best_t2i_r1 = resumed_t2i
-            print(f"  Resumed at epoch {resumed_epoch} (best t2i_R@1={resumed_t2i:.2f})")
+            best_t2i_r1 = resumed_best if resumed_best is not None else resumed_t2i
+            print(f"  Resumed at epoch {resumed_epoch} (best t2i_R@1={best_t2i_r1:.2f})")
         else:
             print(f"  Resumed at epoch {resumed_epoch} (val_loss={resumed_val_loss:.4f})")
 
@@ -309,11 +309,12 @@ def main():
                 log_parts.append(f"LR: {lr:.2e}")
 
                 if is_best:
-                    trainer.save_checkpoint(
+                    ckpt_path = trainer.save_checkpoint(
                         epoch, val_loss,
+                        best_t2i_r1=best_t2i_r1,
                         **{k: v for k, v in eval_results.items() if k != "val_loss"},
                     )
-                    log_parts.append("★ New best!")
+                    log_parts.append(f"★ New best!  → {Path(ckpt_path).name}")
 
                 print("  " + " | ".join(log_parts))
 
@@ -344,6 +345,7 @@ def main():
         if is_best or epoch % 5 == 0:
             ckpt_path = trainer.save_checkpoint(
                 epoch, val_loss,
+                best_t2i_r1=best_t2i_r1,
                 **{k: v for k, v in eval_results.items() if k != "val_loss"},
             )
             suffix = f"  → {Path(ckpt_path).name}"

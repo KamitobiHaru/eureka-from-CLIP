@@ -85,6 +85,13 @@ motion:
   confidence_threshold: 0.5
   valid_classes: [0, 1, 2, 3, 4, 5, 6, 7, 8, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
 
+msrvtt:
+  root: /data1/zsy/datasets/MSR-VTT
+  annotation_file: msrvtt_test_1k.json
+  embedding_cache: ./data/msrvtt/clip_embeddings
+  text_cache: ./data/msrvtt/text_embeddings
+  num_frames: 12
+
 queue:
   max_size: 49152
   mask_stale_texts: false   # Both sides frozen → no staleness, full queue for both i2t and t2i

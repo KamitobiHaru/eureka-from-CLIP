@@ -355,7 +355,7 @@ def main():
     # ── State ───────────────────────────────────────────────────
     global_step = 0
     start_epoch = 1
-    best_t2i_r1 = -1.0  # track best Flickr30k t2i_R@1
+    best_val_pos = float('inf')  # track best seq val position loss (lower is better)
 
     # ── Override eval_interval ──────────────────────────────────
     eval_interval = args.eval_interval or steps_per_epoch  # default: every epoch
@@ -363,7 +363,7 @@ def main():
     # ── Header ──────────────────────────────────────────────────
     print(f"\nPhase 2 fine-tuning: {epochs} epochs, {warmup_steps} warmup, cosine decay")
     print(f"  Flickr eval every {eval_interval} steps (+ epoch end)")
-    print(f"  Save best by t2i_R@1 + every 5 epochs")
+    print(f"  Save best by val pos + every 5 epochs")
     print("-" * 60)
 
     # ══════════════════════════════════════════════════════════════
@@ -437,7 +437,7 @@ def main():
                 a=f"{result['anchor']:.4f}" if isinstance(result['anchor'], torch.Tensor) else f"{result['anchor']:.4f}",
             )
 
-            # ── Periodic Flickr30k eval ────────────────────────
+            # ── Periodic Flickr30k eval (monitoring only) ────────
             if flickr_loader is not None and global_step % eval_interval == 0:
                 flickr_results = evaluate_flickr(
                     temporal, flickr_loader, device, logit_scale, temperature,
@@ -446,30 +446,28 @@ def main():
                 i2t = flickr_results.get("i2t_R@1", -1.0)
                 lr_val = optimizer.param_groups[0]["lr"]
 
-                is_best = t2i > best_t2i_r1
-                if is_best:
-                    best_t2i_r1 = t2i
-
                 log = (
                     f"  Step {global_step}  |  Flickr i2t_R@1: {i2t:.1f}  |  "
-                    f"t2i_R@1: {t2i:.1f}  |  Best t2i: {best_t2i_r1:.1f}  |  "
-                    f"Val loss: {flickr_results['val_loss']:.4f}  |  LR: {lr_val:.2e}"
+                    f"t2i_R@1: {t2i:.1f}  |  Val loss: {flickr_results['val_loss']:.4f}  |  "
+                    f"LR: {lr_val:.2e}"
                 )
-                if is_best:
-                    _save_temporal(ckpt_dir, epoch, temporal, optimizer, scheduler, scaler,
-                                   global_step, flickr_results)
-                    log += "  ★ New best!"
                 print(log)
 
-        # ── End-of-epoch sequence validation ────────────────────
+        # ── End-of-epoch sequence validation (determines best) ──
         val_metrics = evaluate_sequence(
             temporal, text_encoder, val_loader, sNCE_fn, pos_reward_fn,
             device, use_amp,
         )
         lr_val = optimizer.param_groups[0]["lr"]
-        print(f"  Seq val: sNCE={val_metrics['sNCE']:.4f}  pos={val_metrics['pos']:.4f}  LR: {lr_val:.2e}")
 
-        # ── End-of-epoch Flickr30k eval ─────────────────────────
+        is_best = val_metrics["pos"] < best_val_pos
+        if is_best:
+            best_val_pos = val_metrics["pos"]
+
+        print(f"  Seq val: sNCE={val_metrics['sNCE']:.4f}  pos={val_metrics['pos']:.4f}  "
+              f"Best pos: {best_val_pos:.4f}  LR: {lr_val:.2e}")
+
+        # ── End-of-epoch Flickr30k eval (monitoring only) ─────
         if flickr_loader is not None:
             flickr_results = evaluate_flickr(
                 temporal, flickr_loader, device, logit_scale, temperature,
@@ -478,40 +476,45 @@ def main():
             i2t = flickr_results.get("i2t_R@1", -1.0)
             avg_sNCE = sum(epoch_sNCE) / len(epoch_sNCE) if epoch_sNCE else 0.0
 
-            is_best = t2i > best_t2i_r1
-            if is_best:
-                best_t2i_r1 = t2i
-
             log = (
                 f"Epoch {epoch:02d}/{epochs} done  |  "
                 f"Train sNCE: {avg_sNCE:.4f}  |  "
                 f"Flickr i2t_R@1: {i2t:.1f}  |  t2i_R@1: {t2i:.1f}  |  "
-                f"Best t2i: {best_t2i_r1:.1f}  |  LR: {lr_val:.2e}"
+                f"LR: {lr_val:.2e}"
             )
 
             if is_best or epoch % 5 == 0:
                 path = _save_temporal(ckpt_dir, epoch, temporal, optimizer, scheduler,
-                                       scaler, global_step, flickr_results)
+                                       scaler, global_step, flickr_results,
+                                       val_metrics=val_metrics)
                 log += f"  → {Path(path).name}"
                 if is_best:
-                    log += "  ★ New best!"
+                    log += "  ★ New best (val pos)!"
         else:
             log = (
                 f"Epoch {epoch:02d}/{epochs} done  |  "
-                f"Seq val sNCE: {val_metrics['sNCE']:.4f}  |  LR: {lr_val:.2e}"
+                f"Seq val sNCE: {val_metrics['sNCE']:.4f}  |  "
+                f"LR: {lr_val:.2e}"
             )
+            if is_best or epoch % 5 == 0:
+                path = _save_temporal(ckpt_dir, epoch, temporal, optimizer, scheduler,
+                                       scaler, global_step, None,
+                                       val_metrics=val_metrics)
+                log += f"  → {Path(path).name}"
+                if is_best:
+                    log += "  ★ New best (val pos)!"
 
         print("  " + log)
         print("-" * 60)
 
-    print(f"Phase 2 complete. Best Flickr30k t2i_R@1: {best_t2i_r1:.1f}")
+    print(f"Phase 2 complete. Best seq val pos: {best_val_pos:.4f}")
 
 
 def _save_temporal(ckpt_dir, epoch, temporal, optimizer, scheduler, scaler,
-                   global_step, flickr_results):
-    """Save temporal checkpoint with Flickr recall in filename."""
-    t2i = flickr_results.get("t2i_R@1", None)
-    fname = f"temporal_epoch{epoch:02d}_t2i{t2i:.1f}.pt" if t2i is not None else f"temporal_epoch{epoch:02d}.pt"
+                   global_step, flickr_results, val_metrics=None):
+    """Save temporal checkpoint with val pos in filename."""
+    pos = val_metrics["pos"] if val_metrics else 0.0
+    fname = f"temporal_epoch{epoch:02d}_pos{pos:.4f}.pt"
     path = os.path.join(ckpt_dir, fname)
     state = {
         "epoch": epoch,
@@ -519,6 +522,7 @@ def _save_temporal(ckpt_dir, epoch, temporal, optimizer, scheduler, scaler,
         "temporal_state_dict": temporal.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "scheduler_state_dict": scheduler.state_dict(),
+        "val_metrics": val_metrics,
         "flickr_results": flickr_results,
     }
     if scaler:

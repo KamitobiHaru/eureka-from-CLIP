@@ -173,11 +173,13 @@ class TemporalTrainer(Trainer):
                         **extra_metrics) -> str:
         """Save temporal_state_dict (model is frozen, not saved)."""
         t2i_r1 = extra_metrics.get("t2i_R@1", None)
+        best_t2i_r1 = extra_metrics.get("best_t2i_r1", t2i_r1)
         ckpt_dir = self.cfg["training"]["checkpoint_dir"]
+        # Include global_step so every save gets a unique, sortable name
         path = os.path.join(
             ckpt_dir,
-            f"temporal_epoch{epoch:02d}_t2i{t2i_r1:.1f}.pt" if t2i_r1 is not None
-            else f"temporal_epoch{epoch:02d}_val{val_loss:.4f}.pt",
+            f"temporal_e{epoch:02d}s{self.global_step:06d}_t2i{t2i_r1:.1f}.pt" if t2i_r1 is not None
+            else f"temporal_e{epoch:02d}s{self.global_step:06d}_val{val_loss:.4f}.pt",
         )
         state = {
             "epoch": epoch,
@@ -187,6 +189,7 @@ class TemporalTrainer(Trainer):
             "scheduler_state_dict": self.scheduler.state_dict(),
             "val_loss": val_loss,
             "t2i_r1": t2i_r1,
+            "best_t2i_r1": best_t2i_r1,
         }
         if self.scaler:
             state["scaler_state_dict"] = self.scaler.state_dict()
@@ -209,4 +212,6 @@ class TemporalTrainer(Trainer):
         self.global_step = ckpt.get("global_step", 0)
         if self.queue is not None and "queue_state" in ckpt:
             self.queue.load_state_dict(ckpt["queue_state"])
-        return ckpt["epoch"], ckpt["val_loss"], ckpt.get("t2i_r1", None)
+        return (ckpt["epoch"], ckpt["val_loss"],
+                ckpt.get("t2i_r1", None),
+                ckpt.get("best_t2i_r1", None))
