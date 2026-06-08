@@ -2,25 +2,53 @@
 
 **Text-to-Video Scene Retrieval with BERT-Aligned CLIP + Temporal Transformer**
 
-Retrieve video scenes using natural language queries. Supports two pipelines:
-- **Legacy**: CLIP encode → mean pool over frames → cosine similarity search
-- **Temporal** (new): CLIP per-frame features → TemporalTransformer (learnable PE + attention) → BERT text encoder
+Retrieve video scenes using natural language queries. Two-stage contrastive training aligns a text encoder (BERT or CLIP) with frozen CLIP vision embeddings, then optionally adds temporal reasoning via a learned transformer over per-frame features.
 
 ---
 
-## Pipeline Overview
+## Pipeline
 
 ```
-Video → scene segmentation → T frames/scene → CLIP Vision (per frame) → TemporalTransformer → scene embedding
-                                                                                                ↓
-                                                                                         cosine similarity
-                                                                                                ↑
-Query text → BERT + Projection → query embedding
+                              ┌──────────────────────┐
+Video → PySceneDetect ──────→ │  T frames / scene     │
+                              └──────────┬───────────┘
+                                         ↓
+                         ┌───────────────────────────────┐
+                         │  CLIP ViT-B/32 Vision Encoder  │  (frozen)
+                         │  (per-frame → L2-normed 512d) │
+                         └──────────────────┬────────────┘
+                            ╱                ┊              ╲
+                      mean pool        TemporalTransformer     mean pool
+                           ╱                ┊                  ╲
+                    ┌──────────┐     ┌──────────────┐     ┌──────────┐
+                    │ scene_emb│────→│ scene_emb    │     │ text_emb │
+                    │ (CLIP)   │     │ (temporal)   │     │ (CLIP)   │
+                    └─────┬────┘     └──────┬───────┘     └─────┬────┘
+                          └────────┬────────┘                  │
+                                   ↓                           ↓
+                           cosine similarity  ←───────  text embedding
+                                                              ↑
+                                                    ┌─────────────────┐
+                                                    │ Text Encoder    │
+                                                    │ (BERT or CLIP)  │
+                                                    └────────┬────────┘
+                                                             │
+                                                      "a person walking"
 ```
 
-Two training stages:
-1. **Pre-extract CLIP features** — offline, one-time
-2. **Temporal training** — jointly train TemporalTransformer + BERT on synthetic sequences from COCO images
+Two text encoder options, selected via `text_encoder.type` in config:
+
+| Type | Encoder | Trainable | Best for |
+|------|---------|-----------|----------|
+| `bert` | BERT-base + ProjectionHead(768→512) | Full fine-tuning or LoRA | Higher recall when trained with queue + uniformity |
+| `clip` | CLIP ViT-B/32 text encoder (open_clip) | LoRA only (base frozen) | Quick alignment, smaller checkpoints |
+
+Two scene encoding modes:
+
+| Mode | Method | Use case |
+|------|--------|----------|
+| **Legacy** | CLIP per-frame → mean pool → L2-norm | Fast, no temporal sensitivity |
+| **Temporal** | CLIP per-frame → TemporalTransformer | Understands order ("X then Y") |
 
 ---
 
@@ -33,151 +61,234 @@ pip install -r requirements.txt
 ```
 
 ### Dependencies
-- Python 3.9+, PyTorch 2.0+, CUDA-capable GPU recommended
-- `open_clip_torch`, `transformers`, `opencv-python`, `scenedetect`, `pyyaml`, `numpy`, `tqdm`
 
-### Download Pre-trained Models
+- Python 3.10+, PyTorch 2.0+, CUDA-capable GPU recommended
+- `open_clip_torch`, `transformers`, `opencv-python`, `scenedetect`, `gradio`, `pyyaml`, `peft`, `numpy`, `tqdm`
+
+### Download Models
+
+**CLIP ViT-B/32** (OpenAI WIT-400M):
+
+The model checkpoint is auto-detected from these paths (in order):
+1. `models/clip-vit-base-patch32/open_clip_model.safetensors` — converted from HuggingFace (recommended)
+2. `models/clip/openai_open_clip_model.safetensors` — downloaded via modelscope
+3. `models/clip/openai_pytorch_model.bin` — legacy torch format
+
+To convert from HuggingFace:
 
 ```bash
-# BERT-base (used for text encoding)
-bash scripts/download_bert.sh
+# Clone the HF model repo first, then:
+python scripts/convert_hf_to_openclip.py
+```
 
-# CLIP ViT-B/32 (used for visual encoding)
-python scripts/download_clip_model.py
+To download via modelscope (older method):
+
+```bash
+python scripts/download_openai_clip.py
+```
+
+**BERT-base** (for the BERT text encoder option):
+
+```bash
+# Download to models/bert-base-uncased/
+python -c "from transformers import BertModel; BertModel.from_pretrained('bert-base-uncased')"
 ```
 
 ---
 
 ## Data Preparation
 
-### 1. Download MS COCO
+### 1. COCO 2017
 
-You need the COCO 2017 train/val images and captions. Set `coco_root` in `config/default.yaml` to point to your COCO directory.
+Download COCO 2017 train/val images and captions. Set paths in config:
+
+```yaml
+data:
+  coco_root: ./dataset_annotation
+  annotations_dir: annotations_trainval2017/annotations
+```
 
 Expected structure:
+
 ```
-{coco_root}/
+{data.coco_root}/
 ├── train2017/             # 118K images
 ├── val2017/               # 5K images
-└── annotations_trainval2017/annotations/
+└── {data.annotations_dir}/
     ├── captions_train2017.json
     └── captions_val2017.json
 ```
 
-### 2. Pre-extract CLIP Features
+### 2. Flickr30k (optional, for evaluation)
 
-**Required before any training. This is a one-time step.**
+Download Flickr30k images and annotations. Expects:
 
-```bash
-python scripts/precompute_embeddings.py
+```yaml
+flickr:
+  root: ./dataset_annotation
+  annotation_file: flickr_annotations_30k.csv
+  embedding_cache: ./data/flickr30k/clip_embeddings
 ```
 
-This encodes every COCO image through CLIP ViT-B/32 and saves 512-dim L2-normalized embeddings as `.npy` files to `data/coco/clip_embeddings/`. This takes ~30 minutes on a GPU.
+The annotation CSV must have columns: `filename`, `split` (train/test), `raw` (JSON list of 5 captions).
+
+### 3. Pre-extract CLIP Features
+
+**Required before any training.** Encodes every image through CLIP ViT-B/32 vision encoder and saves 512-dim L2-normalized embeddings as `.npy` files.
+
+```bash
+# COCO
+python scripts/precompute_embeddings.py
+
+# Flickr30k (optional, needed for evaluation)
+python scripts/precompute_flickr_embeddings.py
+```
 
 ---
 
 ## Training
 
-### Stage 1: Train BERT Alignment (Legacy)
+### Option A: BERT Alignment (Legacy, `text_encoder.type: bert`)
 
-Trains BERT-base to align with CLIP's visual embedding space using standard image-caption pairs.
+Trains BERT-base to align with CLIP's frozen visual embedding space using image-caption pairs from COCO (+ optionally Flickr30k). Supports LoRA fine-tuning, contrastive queue with false-negative masking, and text uniformity regularization.
 
 ```bash
 python scripts/train_bert.py --config config/default.yaml
 ```
 
-Checkpoints saved to `checkpoints/bert_epoch*.pt`.
-
-### Stage 2: Train TemporalTransformer + BERT (New)
-
-Jointly trains the temporal transformer and BERT on **synthetic pseudo-video sequences** constructed from random COCO images.
-
-**How synthetic sequences work:**
-- Each sample groups K=3~10 random COCO images (uniform random)
-- Picks one caption per image
-- Builds a **correct** caption by joining captions with temporal connectors in image order
-  - Index-based: *"First, a dog runs. Second, a car passes. Third, a bird flies. Last, sunset."*
-  - Sequential: *"To begin with, a dog runs. After that, a car passes. Finally, sunset."*
-- Builds a **shuffled** caption using the same captions in permuted order (negative sample for temporal loss)
-  - *"First, sunset. Second, a dog runs. Third, a car passes. Last, a bird flies."* (wrong order)
-
-**Two losses:**
-- `SymmetricInfoNCE(video_emb, correct_text_emb)` — **semantic alignment**: scene embedding matches its correct description
-- `OrderConsistencyLoss(video_emb, correct_text_emb, wrong_text_emb)` — **temporal order**: correct description must be closer than shuffled description (triplet margin)
-
-```bash
-python scripts/train_temporal.py --config config/default.yaml
-```
-
-Checkpoints saved to `checkpoints/temporal_epoch*.pt`.
-
-### Key Training Parameters (in `config/default.yaml` under `temporal:`)
+Key config parameters:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `num_layers` | 2 | Transformer encoder layers (1-3, trade-off speed vs modeling) |
-| `nhead` | 8 | Attention heads (4 or 8; 8 is standard for 512-dim) |
-| `dim_feedforward` | 1024 | FFN hidden dim (1024 is half of standard — lightweight) |
-| `dropout` | 0.1 | Dropout rate (increase to 0.2 if overfitting) |
-| `max_frames` | 16 | Max frames for learnable PE table |
-| `sequence_min_len` | 3 | Min images per synthetic sequence |
-| `sequence_max_len` | 10 | Max images per synthetic sequence |
-| `order_consistency_margin` | 0.2 | Triplet margin for order loss (higher = stricter order penalty) |
-| `order_consistency_weight` | 0.5 | λ weight balancing order loss vs semantic loss |
-| `temporal_lr` | 1e-4 | Learning rate for TemporalTransformer (trained from scratch) |
-| `bert_lr` | 3e-5 | Learning rate for BERT (fine-tuning) |
-| `save_every_epoch` | true | Save checkpoint at every epoch; if false, save best only |
-| `warmup_steps` | 6000 | Linear warmup before cosine decay (in `training:` section) |
-| `batch_size` | 64 | Batch size (in `training:` section) |
+| `training.batch_size` | 128 | Batch size |
+| `training.lr` | 3e-4 | Learning rate (AdamW) |
+| `training.t2i_weight` | 0.75 | Weight for text→image direction (>0.5 = more weight on t2i) |
+| `training.uniformity_weight` | 1.25 | Text uniformity regularizer (0 = disabled) |
+| `lora.enabled` | true | LoRA for BERT (targets: key/query/value/output.dense) |
+| `queue.max_size` | 49152 | Contrastive queue size (0 = disabled) |
+| `queue.mask_stale_texts` | true | i2t uses in-batch negatives only (avoids stale queue texts) |
 
-### How to Tune
+Checkpoints saved to `{training.checkpoint_dir}/bert_epoch{nn}_t2i{recall}.pt`.
 
-**If temporal sensitivity is weak** (shuffled vs correct captions give similar scores):
-- Increase `order_consistency_weight` (e.g., 0.5 → 1.0)
-- Increase `order_consistency_margin` (e.g., 0.2 → 0.3)
-- Add more `num_layers` (e.g., 2 → 3)
+### Option B: CLIP Text Encoder Alignment (`text_encoder.type: clip`)
 
-**If overfitting** (val loss diverges from train loss):
-- Increase `dropout` (e.g., 0.1 → 0.2)
-- Decrease `temporal_lr` (e.g., 1e-4 → 5e-5)
-- Decrease `sequence_max_len` (e.g., 10 → 8) for simpler sequences
+Trains only LoRA adapters on CLIP's own text transformer (base frozen). The same SymmetricInfoNCE loss aligns text → frozen CLIP vision embeddings. Since both vision and text start from CLIP's pretrained space, this converges much faster.
 
-**If training is unstable** (loss spikes):
-- Increase `warmup_steps` (e.g., 6000 → 10000)
-- Decrease `temporal_lr` (e.g., 1e-4 → 5e-5)
+```bash
+python scripts/train_bert.py --config config/default_clip_text.yaml
+```
 
-**If semantic alignment is poor** (search results don't match content):
-- Increase `order_consistency_weight` may hurt semantic alignment — try decreasing it (e.g., 0.5 → 0.3) to focus more on InfoNCE
-- Check BERT fine-tuning isn't too aggressive: keep `bert_lr` at 3e-5 or lower
+Config differences from BERT mode:
+
+```yaml
+text_encoder:
+  type: clip
+  clip_lora:
+    enabled: true
+    r: 8
+    alpha: 16
+    target_modules: ["attn.out_proj", "mlp.c_fc", "mlp.c_proj"]
+```
+
+Note: CLIP's transformer uses fused QKV (`in_proj_weight` in `nn.MultiheadAttention`), so LoRA is applied to output projections and MLP layers rather than query/value.
+
+### Option C: Temporal Transformer
+
+Jointly trains a TemporalTransformer + frozen pretrained BERT on **synthetic pseudo-video sequences** built from COCO images.
+
+**Synthetic sequences** group K=3~10 random COCO images, pick one caption per image, and build:
+- **Correct caption**: temporally ordered with connectors (*"First, a dog. Then, a cat. Finally, a car."*)
+- **Shuffled caption**: same captions in permuted order (negative for temporal-order loss)
+
+**Two losses** (in config `default3_temporal.yaml`):
+
+| Loss | Weight | Purpose |
+|------|--------|---------|
+| `SymmetricInfoNCE` | 1.0 | Semantic alignment: scene ↔ description |
+| `PositionPredictionReward` | 1.0 | Frame-level MSE on (cx, cy, scale) for motion samples |
+| `AnchorMSE` | 0.05 | Keep video embedding anchored in CLIP space |
+
+**Motion sequences** (optional, advanced): Use YOLO segmentation + LaMa inpainting to extract objects from COCO images, then composite them onto clean backgrounds along scripted trajectories (horizontal/diagonal/zoom). This provides ground-truth per-frame positions for the position-prediction reward.
+
+Prerequisites:
+1. Precomputed COCO embeddings
+2. Precomputed motion sequences (if using `--use_motion`)
+3. A trained BERT checkpoint from Option A
+
+```bash
+# Step 1: Precompute motion sequences (takes hours, GPU-heavy)
+python scripts/precompute_motion_sequences.py \
+    --config config/default3_temporal.yaml \
+    --total_sequences 50000 --val_sequences 2500 \
+    --workers 4
+
+# Step 2: Train temporal transformer
+python scripts/train_temporal.py \
+    --bert_checkpoint ../weights/bert_best.pt \
+    --config config/default3_temporal.yaml \
+    --use_motion
+```
+
+---
+
+## Evaluation
+
+### CLIP Zero-Shot Baseline
+
+Evaluate CLIP's own text encoder on Flickr30k to get the ceiling performance:
+
+```bash
+python scripts/evaluate_clip_text_encoder.py --config config/default.yaml
+```
+
+### BERT Checkpoint Evaluation
+
+Runs recall@K on COCO val2017 + Flickr30k test:
+
+```bash
+python scripts/evaluate_checkpoint.py <checkpoint.pt> --config config/default.yaml
+```
+
+### Multilingual Evaluation (Cross-Lingual Transfer)
+
+If using multilingual BERT (`models/bert-base-multilingual-cased`), evaluate on Chinese Flickr30k:
+
+```bash
+python scripts/evaluate_multilingual.py \
+    --checkpoint ../weights/bert_best.pt \
+    --config config/default_multilingual.yaml \
+    --device cuda:0
+```
 
 ---
 
 ## Inference
 
-### Prerequisites
-
-First, segment a video into scenes:
+### 1. Segment a Video
 
 ```bash
-python scripts/segment_video.py demo.mp4 -o ./segments/demo
+python scripts/segment_video.py demo.mp4 -o ./segments
 ```
 
-This saves scene thumbnails, frame images, and `metadata.json` to `./segments/demo/`.
+Saves scene thumbnails, frames, and `metadata.json` to `./segments/demo/`.
 
-### CLI Search
+### 2. Search
 
 **Legacy mode** (CLIP mean-pool + CLIP text encoder):
+
 ```bash
 python run.py ./segments/demo --query "a person walking"
 ```
 
-**Legacy + BERT mode**:
+**Legacy + BERT** (trained text encoder):
+
 ```bash
 python run.py ./segments/demo --query "a person walking" \
     --bert_checkpoint checkpoints/bert_epoch02_val1.5993.pt
 ```
 
-**New temporal mode** (CLIP per-frame → TemporalTransformer + BERT):
+**Temporal mode** (CLIP per-frame → TemporalTransformer + BERT):
+
 ```bash
 python run.py ./segments/demo --query "a person walking then sitting" \
     --temporal_checkpoint checkpoints/temporal_epoch03_val1.2345.pt
@@ -189,82 +300,90 @@ python run.py ./segments/demo --query "a person walking then sitting" \
 python app.py
 ```
 
-Open the browser URL. In the "Process Video" tab:
-1. Upload a video
-2. (Optional) Expand "Temporal Transformer", enable checkbox, enter checkpoint path
-3. Click "Process Video"
-
-Then switch to "Search Scenes" tab to query.
-
----
-
-## Verification / Testing
-
-### Test the Training Pipeline (Quick Check)
-
-Run 1 epoch on a small subset to verify loss decreases:
-
-```bash
-# Override for fast test: reduce epochs, use fewer samples
-python scripts/train_temporal.py --config config/default.yaml --checkpoint_dir /tmp/test_ckpt
-```
-
-Check that both `nce_loss` and `order_loss` decrease and are non-zero in the progress bar.
-
-### Test Temporal Sensitivity
-
-After training, verify the temporal model actually understands order:
-
-```bash
-python run.py ./segments/demo \
-    --query "first a person walks in then sits down finally waves" \
-    --temporal_checkpoint checkpoints/temporal_best.pt
-```
-
-Then compare with the same query in legacy mode — the temporal model should rank scenes where the action unfolds in that order higher.
-
-### Regression Test
-
-Ensure legacy mode still works identically:
-
-```bash
-python run.py ./segments/demo --query "a person" -o /tmp/legacy
-python run.py ./segments/demo --query "a person" -t checkpoint.pt -o /tmp/temporal
-```
-
-Results should differ (different encoders) but both should produce plausible results.
+Opens a browser UI with two tabs:
+1. **Process Video** — upload a video, detect scenes, optionally enable temporal transformer
+2. **Search Scenes** — query indexed scenes, view ranked results with thumbnails
 
 ---
 
 ## Project Structure
 
 ```
-├── clip_search/                  # Inference package
-│   ├── encoder.py                # CLIP encoder (encode_scene, encode_frames, encode_text)
-│   ├── engine.py                 # SearchEngine (segment → encode → rank)
-│   ├── segmenter.py              # PySceneDetect wrapper
-│   └── temporal_pipeline.py      # Temporal inference factory
+├── clip_search/                      # Inference package
+│   ├── encoder.py                    # CLIP ViT-B/32: encode_scene, encode_frames, encode_text
+│   ├── engine.py                     # SearchEngine: segment → encode → rank
+│   ├── segmenter.py                  # PySceneDetect wrapper with short-scene merging
+│   └── temporal_pipeline.py          # Build temporal inference: CLIP + TemporalTransformer + BERT
 ├── src/
 │   ├── models/
-│   │   ├── bert_encoder.py       # BERT-base + ProjectionHead
-│   │   └── temporal_transformer.py  # Learnable PE + TransformerEncoder
+│   │   ├── bert_encoder.py           # BERT-base + ProjectionHead (768→512) + LoRA
+│   │   ├── clip_text_encoder.py      # CLIP text transformer (open_clip) + LoRA (differentiable forward)
+│   │   └── temporal_transformer.py   # Learnable PE + TransformerEncoder + per-frame position bias
 │   ├── data/
-│   │   ├── coco_dataset.py       # Standard COCO image-caption pairs
-│   │   └── sequence_dataset.py   # Synthetic pseudo-video sequences
+│   │   ├── coco_dataset.py           # COCO image-caption pairs + collate functions
+│   │   ├── flickr_dataset.py         # Flickr30k dataset (for evaluation)
+│   │   ├── flickr_zh_dataset.py      # Chinese Flickr30k (cross-lingual eval)
+│   │   ├── eval_dataset.py           # Combined COCO + Flickr val loader
+│   │   ├── sequence_dataset.py       # Synthetic pseudo-video sequences (connector-based)
+│   │   └── mixed_dataset.py          # Precomputed motion + connector sequences
 │   └── training/
-│       ├── loss.py               # SymmetricInfoNCE + OrderConsistencyLoss
-│       └── trainer.py            # Training loop (used by train_bert.py)
+│       ├── loss.py                   # SymmetricInfoNCE, QueueInfoNCE, OrderConsistencyLoss, PositionPredictionReward
+│       ├── trainer.py                # Training loop with AMP, TQDM, checkpointing, queue management
+│       ├── queue.py                  # GPU-resident FIFO contrastive queue (circular buffer)
+│       └── evaluation.py             # Recall@K metrics (COCO-style)
 ├── scripts/
-│   ├── precompute_embeddings.py  # Extract CLIP features from COCO
-│   ├── train_bert.py             # Train BERT alignment (legacy)
-│   ├── train_temporal.py         # Joint temporal + BERT training
-│   ├── segment_video.py          # CLI: video → scenes
-│   ├── download_bert.sh          # Download BERT-base
-│   └── download_clip_model.py    # Download CLIP ViT-B/32
-├── config/default.yaml           # All configuration
-├── run.py                        # CLI search entry point
-└── app.py                        # Gradio web UI
+│   ├── precompute_embeddings.py      # Extract CLIP image embeddings from COCO
+│   ├── precompute_flickr_embeddings.py  # Extract CLIP embeddings from Flickr30k
+│   ├── precompute_motion_sequences.py   # Generate motion pseudo-videos (YOLO + LaMa + compositing)
+│   ├── continue_motion_sequences.py  # Continue generating sequences after interruption
+│   ├── train_bert.py                 # Train BERT text encoder (+ queue, LoRA, multilingual)
+│   ├── train_temporal.py             # Train TemporalTransformer with frozen BERT
+│   ├── evaluate_checkpoint.py        # Evaluate trained checkpoint on COCO + Flickr
+│   ├── evaluate_clip_text_encoder.py # CLIP zero-shot baseline on Flickr30k
+│   ├── evaluate_multilingual.py      # Bilingual Flickr30k eval
+│   ├── segment_video.py              # CLI: video → scene segmentation
+│   ├── download_clip_model.py        # Download LAION CLIP via HuggingFace
+│   ├── download_openai_clip.py       # Download OpenAI CLIP via modelscope + HF conversion
+│   └── convert_hf_to_openclip.py     # Convert HF Transformers CLIP → open_clip safetensors
+├── config/
+│   ├── default.yaml                  # Full config: COCO+BERT+LoRA+Queue+Motion+Temporal
+│   ├── default_clip_text.yaml        # CLIP text encoder variant (LoRA on CLIP transformer)
+│   ├── default_multilingual.yaml     # Multilingual BERT (bert-base-multilingual-cased)
+│   ├── default2.yaml                 # Variant: r=8, t2i_weight=0.75, uniformity=1.25
+│   ├── default3.yaml                 # Variant: r=8, t2i_weight=0.75, uniformity=2, r=16
+│   ├── default3_temporal.yaml        # Temporal training config (position prediction)
+│   └── default4.yaml                 # Variant: r=8, t2i_weight=0.9, uniformity=1.25
+├── run.py                            # CLI search entry point
+└── app.py                            # Gradio web UI
 ```
+
+## Models Directory
+
+```
+models/
+├── bert-base-uncased/                # BERT-base (English text encoder)
+├── bert-base-multilingual-cased/     # Multilingual BERT (cross-lingual transfer)
+├── clip-vit-base-patch32/            # OpenAI CLIP ViT-B/32 from HuggingFace (recommended)
+│   └── open_clip_model.safetensors   #   → converted to open_clip format
+├── clip/                             # Legacy OpenAI CLIP checkpoints
+│   ├── openai_open_clip_model.safetensors
+│   └── openai_pytorch_model.bin
+├── deprecated_laion_clip/            # LAION-2B CLIP (deprecated, not used)
+├── lama/                             # LaMa image inpainting model (motion sequences)
+├── yolo26x-seg.pt                    # YOLO segmentation model (motion sequences)
+└── hy-mt-1.8b/                       # Hy machine translation model (multilingual data pipeline)
+```
+
+## Config Files Reference
+
+Each YAML config inherits the same base structure. Key differences between configs:
+
+| Config | `text_encoder.type` | LoRA | Queue | Flicker train | Checkpoint dir |
+|--------|---------------------|------|-------|---------------|----------------|
+| `default.yaml` | bert | r=8 (bert) | Yes (49K) | No | `weights/r8_weight0.75_uniformity1.25` |
+| `default_clip_text.yaml` | clip | r=8 (clip) | Yes (49K) | No | `weights/CLIP_r8_weight0.75_uniformity2` |
+| `default_multilingual.yaml` | bert | r=8 (bert) | Yes (49K) | No | `weights/Multilingual_r8_weight0.75_uniformity2` |
+| `default3_temporal.yaml` | — | — | — | — | `weights/r8_weight0.75_uniformity2_temporal` |
 
 ## Citation
 
