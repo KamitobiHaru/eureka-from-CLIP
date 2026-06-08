@@ -9,14 +9,14 @@ model:
 
 training:
   batch_size: 64
-  epochs: 30
+  epochs: 20
   lr: 0.0003
   weight_decay: 0.01
   temperature: 0.07
   max_grad_norm: 1.0
   amp: true
   num_workers: 16
-  checkpoint_dir: ../weights/r8_weight0.75_uniformity2_temporal
+  checkpoint_dir: ../weights/r8_weight0.75_uniformity2_temporal_3
 
 temporal:
   d_model: 512
@@ -37,13 +37,13 @@ temporal:
   # Position prediction warmup: start from 0, linearly ramp up to position_prediction_weight
   # This lets contrastive alignment converge first before adding temporal supervision.
   pos_warmup:
-    start_epoch: 2        # from which epoch to start ramping up (0 = disabled)
+    start_epoch: 5        # from which epoch to start ramping up (0 = disabled)
     steps: 5000            # gradient steps over which to linearly warm up to full weight
     rate: 1.0              # warmup shape: 1.0=linear, <1=faster early, >1=faster later
 
   # Optimisation
-  temporal_lr: 0.0001
-  temporal_warmup: 0
+  temporal_lr: 0.00003
+  temporal_warmup: 2000
 
 motion:
   cache_dir: ./data/coco/mixed_sequences

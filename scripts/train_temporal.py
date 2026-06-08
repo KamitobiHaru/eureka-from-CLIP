@@ -92,11 +92,12 @@ def _build_bert_encoder(cfg, device, bert_checkpoint):
 #  Helper: build optimizer
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _build_optimizer(temporal, weight_decay, t_cfg):
-    """Build AdamW optimising only temporal transformer params."""
+def _build_optimizer(temporal, pos_reward_fn, weight_decay, t_cfg):
+    """Build AdamW optimising temporal transformer + pos head params."""
     temporal_lr = t_cfg.get("temporal_lr", 1e-4)
     return torch.optim.AdamW(
-        temporal.parameters(), lr=temporal_lr, weight_decay=weight_decay
+        list(temporal.parameters()) + list(pos_reward_fn.parameters()),
+        lr=temporal_lr, weight_decay=weight_decay,
     )
 
 
@@ -326,9 +327,6 @@ def main():
     print(f"  Train: {len(train_loader.dataset)} sequences")
     print(f"  Val:   {len(val_loader.dataset)} sequences")
 
-    # ── Optimizer ─────────────────────────────────────────────────
-    optimizer = _build_optimizer(temporal, cfg["training"]["weight_decay"], t_cfg)
-
     # ── Losses ────────────────────────────────────────────────────
     sNCE_fn = SymmetricInfoNCE(temperature=cfg["training"]["temperature"])
     pos_reward_fn = PositionPredictionReward(d_model=t_cfg.get("d_model", 512)).to(device)
@@ -339,6 +337,35 @@ def main():
         "pos_w": t_cfg.get("position_prediction_weight", 0.1),
         "anchor_w": t_cfg.get("anchor_mse_weight", 0.05),
     }
+
+    # ── Pos warmup ────────────────────────────────────────────────
+    # Ramp up pos_w from 0 to its full value over pos_warmup_steps steps,
+    # starting from pos_warmup_start_epoch.
+    pos_warmup_cfg = t_cfg.get("pos_warmup", {})
+    pos_warmup_start_epoch = pos_warmup_cfg.get("start_epoch", 0)
+    pos_warmup_steps = pos_warmup_cfg.get("steps", 0)
+    pos_warmup_rate = pos_warmup_cfg.get("rate", 1.0)
+    steps_per_epoch = len(train_loader)
+    pos_warmup_start_step = max(0, (pos_warmup_start_epoch - 1)) * steps_per_epoch
+    pos_warmup_enabled = pos_warmup_start_epoch > 0 and pos_warmup_steps > 0
+    base_pos_w = losses["pos_w"]
+
+    def get_current_pos_w(global_step):
+        """Return the current pos_w based on warmup schedule."""
+        if not pos_warmup_enabled:
+            return base_pos_w
+        elapsed = global_step - pos_warmup_start_step
+        if elapsed < 0:
+            return 0.0
+        if elapsed >= pos_warmup_steps:
+            return base_pos_w
+        progress = elapsed / pos_warmup_steps
+        if pos_warmup_rate != 1.0:
+            progress = progress ** pos_warmup_rate
+        return progress * base_pos_w
+
+    # ── Optimizer ─────────────────────────────────────────────────
+    optimizer = _build_optimizer(temporal, pos_reward_fn, cfg["training"]["weight_decay"], t_cfg)
 
     # ── Scheduler ─────────────────────────────────────────────────
     epochs = cfg["training"]["epochs"]
@@ -380,8 +407,10 @@ def main():
     print(f"\nTraining: {epochs} epochs, {warmup} warmup steps, cosine decay")
     print(f"  Temporal LR: {t_cfg.get('temporal_lr', 1e-4)} (frozen BERT)")
     print(f"  Losses: {losses['sNCE_w']}×SymmetricInfoNCE + "
-          f"{losses['pos_w']}×PositionPrediction + "
-          f"{losses['anchor_w']}×AnchorMSE")
+          f"{base_pos_w}×PositionPrediction (warmup: "
+          f"{'enabled' if pos_warmup_enabled else 'disabled'}"
+          f"{f', start_epoch={pos_warmup_start_epoch}, steps={pos_warmup_steps}, rate={pos_warmup_rate}' if pos_warmup_enabled else ''})"
+          f" + {losses['anchor_w']}×AnchorMSE")
     print(f"  Save best + every 5 epochs")
     print("-" * 60)
 
@@ -391,6 +420,7 @@ def main():
         pbar = tqdm(train_loader, desc=f"Epoch {epoch:02d}/{epochs}", leave=False)
 
         for batch in pbar:
+            losses["pos_w"] = get_current_pos_w(global_step)
             result = _train_step(
                 batch, temporal, text_encoder, losses,
                 device, scaler, optimizer, max_grad_norm,
@@ -404,6 +434,7 @@ def main():
                 loss=f"{total_loss:.4f}",
                 sNCE=f"{result['sNCE']:.4f}",
                 pos=f"{result['pos_reward']:.4f}",
+                pos_w=f"{losses['pos_w']:.3f}",
                 anchor=f"{result['anchor_mse']:.4f}",
             )
 
