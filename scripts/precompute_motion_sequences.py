@@ -762,7 +762,7 @@ def main():
                         help="Total sequences to generate (train)")
     parser.add_argument("--val_sequences", type=int, default=2500,
                         help="Total sequences to generate (val)")
-    parser.add_argument("--motion_ratio", type=float, default=0.9,
+    parser.add_argument("--motion_ratio", type=float, default=1,
                         help="Ratio of motion vs connector sequences (0-1)")
     parser.add_argument("--device", default=None,
                         help="Device for GPU models")
