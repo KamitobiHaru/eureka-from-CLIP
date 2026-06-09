@@ -1,19 +1,23 @@
 \documentclass[10pt,leqno]{amsart}
 \usepackage{graphicx}
-\baselineskip=16pt
-
 \usepackage{indentfirst,csquotes}
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{xcolor,hyperref,paralist,titlesec,fancyhdr,etoolbox}
+\usepackage[numbers,sort&compress]{natbib}
 
 \topmargin= .5cm
 \textheight= 20cm
 \textwidth= 32cc
 \baselineskip=16pt
-
 \evensidemargin= .9cm
 \oddsidemargin= .9cm
 
-\usepackage{amssymb,amsthm,amsmath}
-\usepackage{xcolor,paralist,hyperref,titlesec,fancyhdr,etoolbox}
+\hypersetup{colorlinks=true, linkcolor=black, filecolor=black, urlcolor=blue, citecolor=blue}
+
+\titleformat{\section}[display]{\normalfont\huge\bfseries\centering}{\centering\chaptertitlename\thechapter}{10pt}{\Large}
+\titlespacing*{\section}{0pt}{0ex}{0ex}
+
 \newtheorem{theorem}{Theorem}[]
 \newtheorem{definition}[theorem]{Definition}
 \newtheorem{example}[theorem]{Example}
@@ -22,41 +26,324 @@
 \newtheorem{corollary}[theorem]{Corollary}
 \newtheorem{conjecture}[theorem]{Conjecture}
 
-\titleformat{\section}[display]{\normalfont\huge\bfseries\centering}{\centering\chaptertitlename\thechapter}{10pt}{\Large}
-\titlespacing*{\section}{0pt}{0ex}{0ex}
-
-\hypersetup{ colorlinks=true, linkcolor=black, filecolor=black, urlcolor=black }
-\def\proof{\noindent {\it Proof. $\, $}}
-\def\endproof{\hfill $\Box$ \vskip 5 pt }
-
-\usepackage{lipsum}
-
 \begin{document}
-\title{Title} %%%%%%%%%%%%
-\author[Initial Surname]{Author}
+
+\title{Eureka-from-CLIP: Replacing CLIP's Text Encoder with Lightweight BERT Adaptation for Zero-Shot Image-Text Retrieval}
+
+\author{Siyuan Zhang$^{*\dagger}$\quad Yadi Cheng$^{\dagger}$\\[4pt]
+  \small Zhejiang University of Technology\\
+  \small\texttt{\{zhangsiyuan,chengyadi\}@zjut.edu.cn}}
 \date{\today}
-\address{Address}
-\email{example@mail.com}
+
 \maketitle
 
 \let\thefootnote\relax
-\footnotetext{MSC2020: Primary 00A05, Secondary 00A66.} %%%%%%%%%%
+\footnotetext{$^{*}$Corresponding author.}
+\footnotetext{$^{\dagger}$Equal contribution.}
 
 \begin{abstract}
-Abstract 
-\end{abstract} %%%%%%%%%
+We present Eureka-from-CLIP, a framework that replaces CLIP's original text encoder with a lightweight BERT-based encoder for text-to-image retrieval under tight resource constraints. Trained on a single GeForce RTX 4060 Laptop GPU (8 GB VRAM) with only 1.35M trainable LoRA \citep{hu2022lora} parameters, our best BERT-uncased model achieves 59.88\% text-to-image R@1 on Flickr30k \citep{plummer2015flickr30k}, outperforming the native CLIP ViT-B/32 encoder (57.90\%) while using a tiny fraction of its trainable parameters. The same model attains 74.10\% image-to-text R@1, closely matching CLIP's 76.90\%. To compensate for the small batch size mandated by limited GPU memory, we employ a contrastive queue that supplies abundant negatives; crucially, we mask stale text embeddings in the queue to prevent gradient contamination while retaining the full image queue for the text-to-image direction. We further extend BERT to multilingual settings: a multilingual BERT trained solely on English captions achieves 55.98\% / 27.74\% text-to-image R@1 on English and zero-shot Chinese Flickr30k respectively, using captions translated by HY-MT1.5~\citep{hymt152025tencent}. This work provides a practical recipe for replacing CLIP's text encoder with arbitrary BERT variants under limited compute.
+\end{abstract}
 
 \bigskip
 
-\noindent \lipsum[1] \cite{1}
+\section{Introduction}
 
-$\,$
+Vision-language models have become a cornerstone of modern multimodal AI. CLIP \citep{radford2021clip}, trained on 400 million image-text pairs with a contrastive objective, demonstrates remarkable zero-shot transfer capabilities across diverse visual recognition tasks. CLIP consists of a vision encoder and a text encoder whose embeddings are aligned in a shared representation space. While CLIP's text encoder is a 63M-parameter Transformer, many applications require custom text encoders --- for multilingual support, domain-specific vocabulary, or computational efficiency.
 
-$\,$
+However, replacing CLIP's text encoder is non-trivial. The text encoder must produce embeddings that lie in the same representation space as CLIP's vision encoder, which is frozen and fixed. A naive approach of fine-tuning a new text encoder with CLIP's contrastive loss often underperforms due to the mismatch in representational capacity and training dynamics.
 
+Our objective is text-to-image (t2i) retrieval: given a natural language query, retrieve the most relevant image or video scene. In this paradigm, the query encoder (text) is the component we directly control and adapt, while the visual encoder only needs to provide a fixed, high-quality feature space. CLIP's vision encoder is already a powerful feature extractor; therefore, rather than training a new vision encoder from scratch, we freeze the CLIP vision backbone and train a text encoder to align with it. This asymmetric design --- training only the text encoder against a frozen visual space --- also brings practical advantages: the visual embeddings can be precomputed once offline, dramatically reducing GPU memory and training time.
+
+Training is conducted on a single GeForce RTX 4060 Laptop GPU with only 8 GB VRAM, a consumer-grade budget that rules out large-batch training. This constraint motivates two key design choices: (1) we use LoRA \citep{hu2022lora} adapters to fine-tune BERT, updating only 1.35M parameters instead of the full 110M; and (2) we introduce a queue-based contrastive loss that provides abundant negatives without increasing batch size, an idea inspired by MoCo \citep{he2020moco}. Precomputing visual embeddings offline further reduces the per-step GPU footprint.
+
+Crucially, our queue design is intentionally asymmetric and aligns precisely with the t2i objective. Since we train only the text encoder, image embeddings in the queue --- produced by the frozen CLIP vision encoder --- never become stale. The image queue therefore provides a rich, consistent set of negatives that directly boosts text-to-image retrieval. Conversely, text embeddings in the queue would be stale (the text encoder evolves during training), so we mask them entirely from the contrastive computation, sacrificing i2t queue negatives without regret. If we had chosen to train the vision encoder instead, the situation would reverse: the image queue would suffer from staleness, and the queue would predominantly enhance image-to-text retrieval --- the opposite of our goal. Thus, training the text encoder and deploying an image-side queue form a natural闭环: the frozen vision encoder guarantees a fresh image queue, and the fresh image queue guarantees strong t2i performance.
+
+In this work, we propose Eureka-from-CLIP, a framework that replaces CLIP's original text encoder with a BERT-based encoder \citep{devlin2019bert} through contrastive distillation. Our key contributions are:
+
+\begin{enumerate}
+    \item We design an asymmetric contrastive training pipeline with a weighted bidirectional loss ($t2i\_weight = 0.75$) that prioritizes text-to-image retrieval performance.
+    \item We introduce a text-staleness-aware queue mechanism that prevents stale text embeddings from contaminating the image-to-text gradient, while retaining the image queue to supply abundant negatives for text-to-image learning --- particularly important given our small batch size.
+    \item We show that a BERT-uncased encoder trained with only COCO captions \citep{lin2014coco} on a single RTX 4060 GPU can match CLIP's native text encoder on Flickr30k \citep{plummer2015flickr30k} zero-shot retrieval, using only 1.35M trainable parameters.
+    \item We demonstrate zero-shot cross-lingual transfer: a multilingual BERT model trained exclusively on English captions achieves non-trivial Chinese Flickr30k retrieval performance, using machine-translated captions via HY-MT1.5~\citep{hymt152025tencent}.
+\end{enumerate}
+
+Our experimental results show that BERT-uncased achieves 59.88\% / 74.10\% (t2i / i2t R@1), with t2i outperforming CLIP's native 57.90\% while i2t is within 2.8 points of CLIP's 76.90\%. The multilingual BERT achieves 27.74\% / 40.10\% on Chinese Flickr30k in a zero-shot cross-lingual setting, significantly outperforming random chance and demonstrating the effectiveness of cross-lingual transfer.
+
+\section{Related Work}
+
+\subsection{Contrastive Vision-Language Pre-training}
+
+CLIP \citep{radford2021clip} introduced a large-scale contrastive learning paradigm that trains vision and language encoders jointly on 400M image-text pairs. The InfoNCE loss \citep{oord2018representation} is used to maximize the similarity of positive pairs while pushing apart negative pairs. Subsequent works have improved upon CLIP in various directions: OpenCLIP provides open-source reproductions, and SigLIP \citep{zhai2023sigmoid} adopts a sigmoid loss for decoupling batch size from performance.
+
+\subsection{Replacing CLIP's Text Encoder}
+
+AltCLIP \citep{chen2022altclip} replaces CLIP's text encoder with XLM-R \citep{conneau2020xlmr} for multilingual capabilities, using a two-stage training process of teacher distillation followed by contrastive learning. Chinese CLIP \citep{yang2022chinese} builds a Chinese-specific vision-language model from scratch with a two-stage training strategy. Our work differs from these approaches in that we focus on a lightweight adaptation of BERT \citep{devlin2019bert} to match CLIP's existing embedding space, requiring only a fraction of the training data and compute.
+
+\subsection{Parameter-Efficient Fine-Tuning}
+
+LoRA \citep{hu2022lora} proposes low-rank decomposition matrices as lightweight adaptations inserted into pre-trained Transformer layers, dramatically reducing the number of trainable parameters. We apply LoRA to BERT's self-attention layers, training only 1.35M parameters (1.2\% of BERT's total parameters) while freezing all original weights.
+
+\subsection{Queue-based Contrastive Learning}
+
+MoCo \citep{he2020moco} introduces a queue-based dictionary for contrastive learning, decoupling dictionary size from batch size. This is especially valuable in resource-constrained settings where the batch size is limited by GPU memory. However, when the encoder being trained produces embeddings that evolve over time, queue entries become stale. Our work directly addresses this staleness issue: we completely mask the text queue for the image-to-text direction, ensuring that only in-batch negatives are used, while retaining the image queue for text-to-image learning (where images come from a frozen CLIP encoder and thus have zero staleness).
+
+\section{Method}
+
+\subsection{Overview}
+
+Our framework replaces CLIP's text encoder with a BERT encoder followed by a lightweight projection head. Because our target task is text-to-image retrieval and CLIP's vision encoder already provides a high-quality frozen feature space, we freeze the vision encoder entirely and train only the text encoder to align with this fixed visual space. This design choice brings three practical benefits: (1) the vision encoder runs only once offline, precomputing embeddings for the entire training set; (2) training reduces to a text-only forward pass, dramatically lowering GPU memory; and (3) the frozen image encoder eliminates the staleness problem for the image side of the contrastive queue. During training, we sample image-text pairs from COCO captions, load the precomputed CLIP image embeddings, and train the BERT encoder to produce text embeddings that align with them in the shared space.
+
+\subsection{Model Architecture}
+
+The model consists of three components:
+
+\textbf{Frozen CLIP Vision Encoder.} We use OpenAI's ViT-B/32 as the frozen vision encoder. All images are encoded once offline, producing 512-dimensional L2-normalized embeddings.
+
+\textbf{BERT Text Encoder.} We use BERT-base (uncased) as the text encoder backbone. For each input caption, BERT's [CLS] token representation is extracted from the final layer.
+
+\textbf{Projection Head.} A linear projection maps the 768-dimensional BERT [CLS] embedding to the 512-dimensional shared space, followed by L2 normalization.
+
+\textbf{LoRA Adapters.} We insert LoRA \citep{hu2022lora} adapters with rank $r=8$ and $\alpha=16$ into BERT's query, key, value, and output projection layers. The original BERT weights remain frozen; only the LoRA parameters and projection head are trainable. This results in only 1.35M trainable parameters out of 110.8M total.
+
+\subsection{Loss Design}
+
+We employ a weighted asymmetric InfoNCE loss \citep{oord2018representation} formulated as:
+
+\begin{equation}
+\mathcal{L} = (1 - \alpha) \cdot \text{CE}(\mathbf{S}_{i2t} \cdot \tau, \mathbf{y}) + \alpha \cdot \text{CE}(\mathbf{S}_{t2i} \cdot \tau, \mathbf{y}),
+\label{eq:asymmetric_loss}
+\end{equation}
+
+where $\mathbf{S}_{i2t} = \mathbf{I} \mathbf{T}^{\top}$ is the image-to-text similarity matrix, $\mathbf{S}_{t2i} = \mathbf{T} \mathbf{I}^{\top}$ is the text-to-image similarity matrix, $\tau = \exp(\gamma)$ is a learnable temperature parameter initialized to $1/0.07$, $\mathbf{y}$ is the set of diagonal labels (positive pairs), $\text{CE}$ denotes cross-entropy, and $\alpha$ is the t2i weight.
+
+We set $\alpha = 0.75$, giving 3$\times$ more weight to the text-to-image direction. This design choice is motivated by real-world usage: in text-to-image retrieval, the user provides a text query and the system retrieves relevant images or scenes, making text-to-image recall the more important metric.
+
+We also add a text uniformity regularizer:
+
+\begin{equation}
+\mathcal{L}_{\text{uni}} = \log\left(\mathbb{E}_{i \neq j, \text{id}(i) \neq \text{id}(j)} \left[\exp(\mathbf{t}_i \cdot \mathbf{t}_j) \right] \right),
+\label{eq:uniformity}
+\end{equation}
+
+which encourages text embeddings to be uniformly distributed on the hypersphere \citep{wang2020uniformity}, preventing collapse. The total loss becomes $\mathcal{L}_{\text{total}} = \mathcal{L} + \beta \cdot \mathcal{L}_{\text{uni}}$, where $\beta = 2.0$.
+
+\subsection{Queue Design with Text Staleness Masking}
+
+Contrastive learning benefits from a large number of negative samples. Following MoCo \citep{he2020moco}, we maintain a FIFO queue of past (image, text) embedding pairs. However, a key challenge arises: the text encoder is being trained, so text embeddings in the queue were produced by earlier, less capable versions of the model. These ``stale'' text embeddings, if used as negatives for the image-to-text direction, can provide misleading gradient signals.
+
+Our core insight is that this staleness is direction-dependent, and the asymmetry aligns perfectly with our task objective:
+
+\begin{itemize}
+    \item \textbf{Image-to-text (i2t):} The text queue is stale (text encoder evolves). We completely mask the text queue for this direction, using only in-batch negatives. This effectively means $\mathbf{S}_{i2t}$ in Eq.~\ref{eq:asymmetric_loss} is computed as $\mathbf{I}_{\text{batch}} \mathbf{T}_{\text{batch}}^{\top}$ without queue entries. Since t2i is our primary concern, sacrificing i2t queue negatives is an acceptable trade-off.
+    \item \textbf{Text-to-image (t2i):} The image queue is \emph{not} stale because image embeddings come from a frozen CLIP encoder. We therefore retain the full image queue for this direction, computing $\mathbf{S}_{t2i} = \mathbf{T}_{\text{batch}} [\mathbf{I}_{\text{batch}}; \mathbf{I}_{\text{queue}}]^{\top}$. The fresh image queue provides a large and consistent set of negatives that directly boosts t2i performance.
+\end{itemize}
+
+This asymmetric queue design is illustrated in Figure~\ref{fig:queue}. Importantly, the choice of which encoder to train and which queue side to keep is not arbitrary. If we had chosen to train the vision encoder while freezing the text encoder, the image embeddings would become stale and the text queue would remain fresh; the queue would then boost i2t instead of t2i --- the opposite of what we need. Our configuration (training text encoder, retaining the image queue) therefore creates a natural alignment between the training objective and the architectural design: the frozen CLIP guarantees a fresh image queue, and the fresh image queue guarantees strong t2i learning. By masking stale text embeddings, we further avoid damaging the i2t gradient, which is doubly beneficial since t2i already receives higher weight in the loss ($\alpha = 0.75$).
+
+\begin{figure}[h]
+\centering
+\begin{tabular}{c|c}
+\hline
+\textbf{i2t direction} & \textbf{t2i direction} \\
+In-batch negatives only & In-batch + queue negatives \\
+\hline
+$\mathbf{I}_{\text{batch}} \mathbf{T}_{\text{batch}}^{\top}$ & $\mathbf{T}_{\text{batch}} [\mathbf{I}_{\text{batch}}; \mathbf{I}_{\text{queue}}]^{\top}$ \\
+No queue (avoid stale texts) & Image queue (no staleness) \\
+\hline
+\end{tabular}
+\caption{Asymmetric queue design for text-staleness-aware contrastive learning.}
+\label{fig:queue}
+\end{figure}
+
+We additionally apply false-negative masking: queue entries sharing the same image ID as a batch item are masked out (set to $-\infty$) in the similarity matrix, preventing them from being treated as negatives.
+
+\subsection{Training Details}
+
+We train on COCO train2017 captions (113k images, 567k captions) using a single GeForce RTX 4060 Laptop GPU with 8 GB VRAM. The training configuration uses:
+\begin{itemize}
+    \item Batch size: 128 (maximum that fits in 8 GB VRAM with BERT-base + LoRA)
+    \item Optimizer: AdamW with learning rate $3\times 10^{-4}$, weight decay 0.01
+    \item Scheduler: Linear warmup (34,536 steps) followed by cosine decay to zero
+    \item Epochs: 30
+    \item Mixed precision (AMP) for computational efficiency
+    \item Queue size: 49,152 (compensates for small batch by providing abundant negatives)
+    \item LoRA rank: 8, alpha: 16, dropout: 0.1
+\end{itemize}
+The queue is updated after loss computation to prevent current-batch items from acting as their own negatives. Precomputed CLIP image embeddings avoid redundant vision forward passes, further reducing GPU memory usage. The entire training run completes in approximately 12 hours.
+
+\section{Experiments}
+
+\subsection{Evaluation Setup}
+
+We evaluate on Flickr30k \citep{plummer2015flickr30k}, which contains 31,783 images, each with 5 human-annotated captions. Following the standard zero-shot retrieval protocol, we use the 1,000-image test set and report Recall@K (R@K) for both image-to-text (i2t) and text-to-image (t2i) directions.
+
+For the CLIP baseline, we use the official OpenAI ViT-B/32 model to encode both images and captions. For the image side, this is the same frozen encoder used during BERT training. For the text side, we use CLIP's native Transformer text encoder.
+
+For the Chinese Flickr30k evaluation, we use the Flickr30k images paired with Chinese translations. The Chinese captions were produced by translating the original English captions using HY-MT1.5~\citep{hymt152025tencent}, a multilingual machine translation model developed by Tencent Hunyuan. We evaluate a multilingual BERT (bert-base-multilingual-cased) model trained with identical hyperparameters on the same COCO English captions. This tests zero-shot cross-lingual generalization: the model has never seen Chinese text during training.
+
+\subsection{Main Results}
+
+Table~\ref{tab:results} presents the main experimental results.
+
+\begin{table}[h]
+\centering
+\caption{Recall@K on Flickr30k test set (1K images). ``Ours'' refers to models trained with our framework using COCO captions only.}
+\label{tab:results}
+\begin{tabular}{lcccccc}
+\toprule
+Method & t2i R@1 & t2i R@5 & t2i R@10 & i2t R@1 & i2t R@5 & i2t R@10 \\
+\midrule
+CLIP ViT-B/32 (zero-shot) & 57.90 & 82.98 & 89.06 & 76.90 & 94.30 & 97.80 \\
+BERT-uncased (EN, Ours)   & 59.88 & 85.10 & 90.78 & 74.10 & 92.40 & 96.00 \\
+\midrule
+Multilingual BERT (EN, Ours) & 55.98 & 81.68 & 88.44 & 68.70 & 90.90 & 95.30 \\
+Multilingual BERT (ZH, Ours) & 27.74 & 54.70 & 68.00 & 40.10 & 68.30 & 79.90 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Our BERT-uncased model achieves highly competitive performance:
+\begin{itemize}
+    \item \textbf{Text-to-image:} R@1 of 59.88\%, \emph{outperforming} CLIP's 57.90\% by 2.0 points, despite training on a single RTX 4060 GPU with only COCO captions. This validates our asymmetric loss design (t2i weight = 0.75) and the effectiveness of the image queue.
+    \item \textbf{Image-to-text:} R@1 of 74.10\%, which is within 2.8 points of CLIP's 76.90\%, with only 1.35M trainable parameters.
+\end{itemize}
+
+The multilingual BERT, trained with identical hyperparameters on the same English COCO data:
+\begin{itemize}
+    \item Achieves 55.98\% t2i R@1 on English Flickr30k, a reasonable degradation from BERT-uncased (59.88\%) due to the multilingual tokenizer's reduced efficiency for English text.
+    \item Attains 27.74\% t2i R@1 on Chinese Flickr30k in a zero-shot cross-lingual setting --- substantially above the random baseline of 0.1\%, demonstrating meaningful cross-lingual transfer.
+\end{itemize}
+
+\subsection{Analysis: Impact of Asymmetric Loss and Queue Design}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lcc}
+\toprule
+Configuration & t2i R@1 & i2t R@1 \\
+\midrule
+Symmetric ($\alpha = 0.50$), full queue & 56.0 & 76.0 \\
+Asymmetric ($\alpha = 0.75$), full queue & 58.5 & 73.5 \\
+Asymmetric ($\alpha = 0.75$), masked text queue & 59.9 & 74.1 \\
+\bottomrule
+\end{tabular}
+\caption{Ablation of loss asymmetry and queue design.}
+\label{tab:ablation}
+\end{table}
+
+Table~\ref{tab:ablation} summarizes ablation experiments. The asymmetric loss shifts the trade-off toward t2i as expected. The masked text queue further improves both directions: avoiding stale text embeddings in the i2t computation provides cleaner gradients, which in turn benefits overall representation quality.
+
+\section{Limitations}
+
+We acknowledge several limitations in this work. First, our models are trained exclusively on COCO train2017 captions (113k images, 567k captions), a single dataset with limited domain diversity. While this allows us to demonstrate the effectiveness of our approach under tight compute constraints, training on a more diverse corpus (e.g., CC-3M~\citep{sharma2018conceptual} or YFCC100M~\citep{thomee2016yfcc100m}) would likely improve generalization.
+
+Second, evaluation is conducted solely on Flickr30k, a benchmark that is similar in domain and scale to COCO (both contain natural scene photographs with human-annotated captions). We do not evaluate on out-of-domain or challenging retrieval benchmarks such as MS-COCO itself as a test set, or on cross-domain generalization tasks. The relatively small 1K test set also means that R@K metrics may have higher variance than would be expected on larger benchmarks.
+
+Third, the zero-shot cross-lingual evaluation is limited to Chinese on a single dataset, using machine-translated rather than human-annotated captions. The translation quality of HY-MT1.5~\citep{hymt152025tencent} may introduce noise that underestimates the true cross-lingual transfer capability.
+
+Fourth, the ablation experiments in Table~\ref{tab:ablation} report single-run results without confidence intervals. Due to compute constraints, each configuration was evaluated once rather than with multiple random seeds, so the observed differences should be interpreted with caution.
+
+\section{Future Work}
+
+Several directions are worth exploring. The most immediate extension is to video retrieval, where a text query must retrieve relevant video clips. This requires aggregating per-frame CLIP embeddings into a video-level representation. Simple approaches such as mean pooling over a frame pool can serve as a baseline, while more sophisticated temporal encoding --- for example, a lightweight Transformer or temporal convolution over the frame embedding sequence --- could capture motion and event structure. Our preliminary experiments indicate that training such a temporal module against frozen CLIP frame embeddings, using the same contrastive framework, is a natural extension of the approach presented here.
+
+Additional future directions include: evaluating on a broader set of benchmarks spanning diverse domains (e.g., MS-COCO test set, Visual Genome, and cross-domain retrieval); exploring larger BERT variants or alternative text encoders with more aggressive parameter efficiency; and extending the framework to support retrieval in additional modalities.
+
+\section{Conclusion}
+
+We presented Eureka-from-CLIP, a framework for replacing CLIP's text encoder with a lightweight BERT adapter under tight resource constraints. Trained on a single RTX 4060 Laptop GPU (8 GB VRAM) with only 1.35M trainable LoRA parameters, our BERT-uncased model outperforms CLIP's native text encoder on text-to-image Flickr30k retrieval (59.88\% vs.~57.90\% t2i R@1) while remaining competitive on image-to-text. Through asymmetric contrastive loss weighting, text-staleness-aware queue design that compensates for small batch sizes, and parameter-efficient fine-tuning, we achieve this with a fraction of the compute required by prior work. Furthermore, we demonstrate that multilingual BERT exhibits non-trivial zero-shot cross-lingual transfer to Chinese without any Chinese training data.
+
+Our approach provides a practical, generalizable recipe for substituting CLIP's text encoder with arbitrary BERT variants, enabling multilingual and domain-specific applications without expensive retraining from scratch.
+
+\section*{Acknowledgments}
+
+The authors thank Jie Lei for guidance and helpful discussions throughout this project. This work was completed as a course project for Python Application Development Foundation at Zhejiang University of Technology.
+
+\bigskip
+
+\bibliographystyle{plainnat}
 \begin{thebibliography}{99}
 
-\bibitem{1} Spiegel, M. R. (1981). Theory and problems of Advanced Calculus: Si (metric) edition. McGraw-Hill. 
+\bibitem[Radford et al.(2021)Radford, Kim, Hallacy, Ramesh, Goh, Agarwal, Sastry, Askell, Mishkin, Clark, Krueger, and Sutskever]{radford2021clip}
+A.~Radford, J.~W.~Kim, C.~Hallacy, A.~Ramesh, G.~Goh, S.~Agarwal, G.~Sastry, A.~Askell, P.~Mishkin, J.~Clark, G.~Krueger, and I.~Sutskever.
+\newblock Learning transferable visual models from natural language supervision.
+\newblock In \textit{ICML}, 2021.
+
+\bibitem[Devlin et al.(2019)Devlin, Chang, Lee, and Toutanova]{devlin2019bert}
+J.~Devlin, M.-W.~Chang, K.~Lee, and K.~Toutanova.
+\newblock BERT: Pre-training of deep bidirectional transformers for language understanding.
+\newblock In \textit{NAACL-HLT}, 2019.
+
+\bibitem[He et al.(2020)He, Fan, Wu, Xie, and Girshick]{he2020moco}
+K.~He, H.~Fan, Y.~Wu, S.~Xie, and R.~Girshick.
+\newblock Momentum contrast for unsupervised visual representation learning.
+\newblock In \textit{CVPR}, 2020.
+
+\bibitem[Hu et al.(2022)Hu, Shen, Wallis, Allen-Zhu, Li, Wang, Wang, and Chen]{hu2022lora}
+E.~J.~Hu, Y.~Shen, P.~Wallis, Z.~Allen-Zhu, Y.~Li, S.~Wang, L.~Wang, and W.~Chen.
+\newblock LoRA: Low-rank adaptation of large language models.
+\newblock In \textit{ICLR}, 2022.
+
+\bibitem[Chen et al.(2022)Chen, Liu, Zhang, Ye, Yang, and Wu]{chen2022altclip}
+Z.~Chen, G.~Liu, B.-W.~Zhang, F.~Ye, Q.~Yang, and L.~Y.~Wu.
+\newblock AltCLIP: Altering the language encoder in CLIP for extended language capabilities.
+\newblock \textit{arXiv preprint arXiv:2211.06679}, 2022.
+
+\bibitem[Yang et al.(2022)Yang, Pan, Lin, Men, Zhang, Zhou, and Zhou]{yang2022chinese}
+A.~Yang, J.~Pan, J.~Lin, R.~Men, Y.~Zhang, J.~Zhou, and C.~Zhou.
+\newblock Chinese CLIP: Contrastive vision-language pretraining in Chinese.
+\newblock \textit{arXiv preprint arXiv:2211.01335}, 2022.
+
+\bibitem[van den Oord et al.(2018)van den Oord, Li, and Vinyals]{oord2018representation}
+A.~van den Oord, Y.~Li, and O.~Vinyals.
+\newblock Representation learning with contrastive predictive coding.
+\newblock \textit{arXiv preprint arXiv:1807.03748}, 2018.
+
+\bibitem[Plummer et al.(2015)Plummer, Wang, Cervantes, Caicedo, Hockenmaier, and Lazebnik]{plummer2015flickr30k}
+B.~A.~Plummer, L.~Wang, C.~M.~Cervantes, J.~C.~Caicedo, J.~Hockenmaier, and S.~Lazebnik.
+\newblock Flickr30k entities: Collecting region-to-phrase correspondences for richer image-to-sentence models.
+\newblock In \textit{ICCV}, 2015.
+
+\bibitem[Lin et al.(2014)Lin, Maire, Belongie, Hays, Perona, Ramanan, Dollár, and Zitnick]{lin2014coco}
+T.-Y.~Lin, M.~Maire, S.~Belongie, J.~Hays, P.~Perona, D.~Ramanan, P.~Dollár, and C.~L.~Zitnick.
+\newblock Microsoft COCO: Common objects in context.
+\newblock In \textit{ECCV}, 2014.
+
+\bibitem[Wang and Isola(2020)]{wang2020uniformity}
+T.~Wang and P.~Isola.
+\newblock Understanding contrastive representation learning through alignment and uniformity on the hypersphere.
+\newblock In \textit{ICML}, 2020.
+
+\bibitem[Conneau et al.(2020)Conneau, Khandelwal, Goyal, Chaudhary, Wenzek, Guzmán, Grave, Ott, Zettlemoyer, and Stoyanov]{conneau2020xlmr}
+A.~Conneau, K.~Khandelwal, N.~Goyal, V.~Chaudhary, G.~Wenzek, F.~Guzmán, E.~Grave, M.~Ott, L.~Zettlemoyer, and V.~Stoyanov.
+\newblock Unsupervised cross-lingual representation learning at scale.
+\newblock In \textit{ACL}, 2020.
+
+\bibitem[Zhai et al.(2023)Zhai, Mustafa, Kolesnikov, and Beyer]{zhai2023sigmoid}
+X.~Zhai, B.~Mustafa, A.~Kolesnikov, and L.~Beyer.
+\newblock Sigmoid loss for language image pre-training.
+\newblock In \textit{ICCV}, 2023.
+
+\bibitem[Sharma et al.(2018)Sharma, Ding, and
+  Soricut]{sharma2018conceptual}
+P.~Sharma, N.~Ding, and R.~Soricut.
+\newblock Conceptual captions: A cleaned, hypernymed, image alt-text dataset for
+  automatic image captioning.
+\newblock In \textit{ACL}, 2018.
+
+\bibitem[Thomee et al.(2016)Thomee, Shamma, Friedland, Elizalde, Ni, Poland,
+  Borth, and Li]{thomee2016yfcc100m}
+B.~Thomee, D.~A.~Shamma, G.~Friedland, B.~Elizalde, K.~Ni, D.~Poland,
+  D.~Borth, and L.-J.~Li.
+\newblock YFCC100M: The new data in multimedia research.
+\newblock \textit{Communications of the ACM}, 59(2):64--73, 2016.
+
+\bibitem[Tencent Hunyuan Team(2025)]{hymt152025tencent}
+Tencent Hunyuan Team.
+\newblock HY-MT1.5 technical report.
+\newblock \textit{arXiv preprint arXiv:2512.24092}, 2025.
 
 \end{thebibliography}
-\end{document} 
+
+\end{document}
