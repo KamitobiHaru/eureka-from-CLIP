@@ -19,6 +19,14 @@ DEVICE = None
 NUM_RESULTS = 10
 
 
+def _run_ffmpeg(cmd: list[str], timeout: int = 300) -> subprocess.CompletedProcess | None:
+    """Run ffmpeg with a timeout. Returns None on timeout/failure."""
+    try:
+        return subprocess.run(cmd, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return None
+
+
 def extract_clip(video_path: str, start_sec: float, end_sec: float, output_path: str) -> str | None:
     """Extract a video segment using ffmpeg. Returns output path or None on failure."""
     output_path = Path(output_path)
@@ -32,8 +40,8 @@ def extract_clip(video_path: str, start_sec: float, end_sec: float, output_path:
         "-c", "copy",
         str(output_path),
     ]
-    result = subprocess.run(cmd, capture_output=True)
-    if result.returncode != 0:
+    result = _run_ffmpeg(cmd)
+    if result is None or result.returncode != 0:
         # Fallback: re-encode with libx264
         cmd = [
             FFMPEG, "-y",
@@ -44,8 +52,8 @@ def extract_clip(video_path: str, start_sec: float, end_sec: float, output_path:
             "-c:a", "aac",
             str(output_path),
         ]
-        result = subprocess.run(cmd, capture_output=True)
-        if result.returncode != 0:
+        result = _run_ffmpeg(cmd)
+        if result is None or result.returncode != 0:
             return None
     return str(output_path)
 
@@ -62,8 +70,8 @@ def convert_to_mp4(input_path: str, output_path: str) -> str | None:
         "-movflags", "+faststart",
         str(output_path),
     ]
-    result = subprocess.run(cmd, capture_output=True)
-    return str(output_path) if result.returncode == 0 else None
+    result = _run_ffmpeg(cmd)
+    return str(output_path) if (result is not None and result.returncode == 0) else None
 
 
 def load_bert_text_encoder(bert_checkpoint: str, device=None):
@@ -120,12 +128,54 @@ def confirm_model(use_temporal: bool, temporal_checkpoint: str, bert_checkpoint:
     return config, f"✅ 当前模型: {name}"
 
 
+def apply_text_encoder(engine: SearchEngine | None, model_config: dict) -> SearchEngine | None:
+    """Hot-swap the engine's text encoder when model config changes.
+
+    Temporal mode is skipped (requires re-processing).
+    """
+    if engine is None:
+        return None
+
+    use_temporal = model_config["use_temporal"]
+    bert_ckpt = model_config["bert_checkpoint"]
+    temporal_ckpt = model_config["temporal_checkpoint"]
+
+    if use_temporal and temporal_ckpt and bert_ckpt:
+        return engine  # Temporal changes scene_encoder too; can't hot-swap
+
+    if bert_ckpt:
+        engine.text_encoder = load_bert_text_encoder(bert_ckpt, device=DEVICE)
+    else:
+        engine.text_encoder = None  # fallback to CLIP's built-in text encoder
+
+    return engine
+
+
 def process_video(video_path: str, model_config: dict, progress=gr.Progress()):
     """Segment and encode a video. Returns (engine_state, gallery, status)."""
     if not video_path:
         raise gr.Error("Please upload a video file.")
 
-    progress(0, desc="Loading CLIP encoder...")
+    progress(0, desc="Preparing video...")
+
+    # Use a stable persistent path for cache keying (not the Gradio temp path)
+    video_stem = Path(video_path).stem
+    persistent_video = Path("test_run") / video_stem / "input.mp4"
+    persistent_video.parent.mkdir(parents=True, exist_ok=True)
+
+    # Skip re-conversion if the persistent copy already exists — preserves
+    # cache mtime/size and avoids slow ffmpeg re-encode on re-process.
+    if persistent_video.exists() and persistent_video.stat().st_size > 0:
+        video_path_to_use = str(persistent_video)
+    else:
+        converted = convert_to_mp4(video_path, str(persistent_video))
+        if converted:
+            video_path_to_use = converted
+        else:
+            shutil.copy2(video_path, str(persistent_video))
+            video_path_to_use = str(persistent_video)
+
+    progress(0, desc="Checking cache...")
 
     use_temporal = model_config["use_temporal"]
     temporal_ckpt = model_config["temporal_checkpoint"]
@@ -144,7 +194,8 @@ def process_video(video_path: str, model_config: dict, progress=gr.Progress()):
         engine = SearchEngine(device=DEVICE)
 
     progress(0.2, desc="Detecting scenes...")
-    scenes = engine.process_video(video_path)
+    scenes = engine.process_video(video_path_to_use)
+    engine._video_path = video_path_to_use
 
     if not scenes:
         raise gr.Error("No scenes detected in the video.")
@@ -156,19 +207,6 @@ def process_video(video_path: str, model_config: dict, progress=gr.Progress()):
         gallery.append(
             (s.thumbnail, f"Scene {s.scene_idx}: {s.start_sec:.1f}s → {s.end_sec:.1f}s ({s.duration:.1f}s)")
         )
-
-    # Convert to H.264 MP4 for browser playback, save to persistent location
-    video_stem = Path(video_path).stem
-    persistent_video = Path("test_run") / video_stem / "input.mp4"
-    persistent_video.parent.mkdir(parents=True, exist_ok=True)
-
-    converted = convert_to_mp4(video_path, str(persistent_video))
-    if converted:
-        engine._video_path = converted
-    else:
-        # Fallback: just copy the original
-        shutil.copy2(video_path, str(persistent_video))
-        engine._video_path = str(persistent_video)
 
     progress(1.0, desc="Done!")
     return engine, gallery, f"✅ {len(scenes)} scenes indexed, ready to search."
@@ -281,6 +319,10 @@ with gr.Blocks(title="CLIP Video Scene Search") as demo:
         fn=confirm_model,
         inputs=[use_temporal, temporal_checkpoint, bert_checkpoint],
         outputs=[model_config_state, model_status],
+    ).then(
+        fn=apply_text_encoder,
+        inputs=[engine_state, model_config_state],
+        outputs=[engine_state],
     )
 
     process_btn.click(
