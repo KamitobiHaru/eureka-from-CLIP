@@ -249,7 +249,7 @@ def search_scenes(engine: SearchEngine, query: str, top_k: int):
     return outputs
 
 
-with gr.Blocks(title="CLIP Video Scene Search") as demo:
+with gr.Blocks(title="CLIP Video Scene Search", css=".hide-video-preview video { display: none !important; }") as demo:
     gr.Markdown(
         "# 🎬 CLIP Video Scene Search\n"
         "Upload a video, then search for scenes using natural language queries."
@@ -262,7 +262,7 @@ with gr.Blocks(title="CLIP Video Scene Search") as demo:
         # ── Left Column: Upload & Process ─────────────────────
         with gr.Column(scale=1, min_width=480):
             gr.Markdown("### Step 1: Upload & Process Video")
-            video_input = gr.Video(label="Upload Video", height=280)
+            video_input = gr.Video(label="Upload Video", height=280, elem_classes="hide-video-preview")
             with gr.Accordion("Model Settings (optional)", open=False):
                 use_temporal = gr.Checkbox(label="Enable Temporal Transformer", value=False)
                 temporal_checkpoint = gr.Textbox(
