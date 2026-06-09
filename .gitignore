@@ -54,3 +54,5 @@ output/
 segments/
 
 dataset_annotation/
+
+test_run/
