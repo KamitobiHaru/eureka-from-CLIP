@@ -94,6 +94,13 @@ MoCo \citep{he2020moco} introduces a queue-based dictionary for contrastive lear
 
 Our framework replaces CLIP's text encoder with a BERT encoder followed by a lightweight projection head. Because our target task is text-to-image retrieval and CLIP's vision encoder already provides a high-quality frozen feature space, we freeze the vision encoder entirely and train only the text encoder to align with this fixed visual space. This design choice brings three practical benefits: (1) the vision encoder runs only once offline, precomputing embeddings for the entire training set; (2) training reduces to a text-only forward pass, dramatically lowering GPU memory; and (3) the frozen image encoder eliminates the staleness problem for the image side of the contrastive queue. During training, we sample image-text pairs from COCO captions, load the precomputed CLIP image embeddings, and train the BERT encoder to produce text embeddings that align with them in the shared space.
 
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{figures/figure1.png}
+\caption{Training pipeline of Eureka-from-CLIP. Frozen CLIP vision encoder precomputes image embeddings (never stale). Trainable BERT text encoder with LoRA produces text embeddings. The image queue supplies abundant negatives for t2i learning, while the stale text queue is masked out.}
+\label{fig:pipeline}
+\end{figure}
+
 \subsection{Model Architecture}
 
 The model consists of three components:
@@ -139,10 +146,12 @@ Our core insight is that this staleness is direction-dependent, and the asymmetr
     \item \textbf{Text-to-image (t2i):} The image queue is \emph{not} stale because image embeddings come from a frozen CLIP encoder. We therefore retain the full image queue for this direction, computing $\mathbf{S}_{t2i} = \mathbf{T}_{\text{batch}} [\mathbf{I}_{\text{batch}}; \mathbf{I}_{\text{queue}}]^{\top}$. The fresh image queue provides a large and consistent set of negatives that directly boosts t2i performance.
 \end{itemize}
 
-This asymmetric queue design is illustrated in Figure~\ref{fig:queue}. Importantly, the choice of which encoder to train and which queue side to keep is not arbitrary. If we had chosen to train the vision encoder while freezing the text encoder, the image embeddings would become stale and the text queue would remain fresh; the queue would then boost i2t instead of t2i --- the opposite of what we need. Our configuration (training text encoder, retaining the image queue) therefore creates a natural alignment between the training objective and the architectural design: the frozen CLIP guarantees a fresh image queue, and the fresh image queue guarantees strong t2i learning. By masking stale text embeddings, we further avoid damaging the i2t gradient, which is doubly beneficial since t2i already receives higher weight in the loss ($\alpha = 0.75$).
+This asymmetric queue design is illustrated in Table~\ref{tab:queue}. Importantly, the choice of which encoder to train and which queue side to keep is not arbitrary. If we had chosen to train the vision encoder while freezing the text encoder, the image embeddings would become stale and the text queue would remain fresh; the queue would then boost i2t instead of t2i --- the opposite of what we need. Our configuration (training text encoder, retaining the image queue) therefore creates a natural alignment between the training objective and the architectural design: the frozen CLIP guarantees a fresh image queue, and the fresh image queue guarantees strong t2i learning. By masking stale text embeddings, we further avoid damaging the i2t gradient, which is doubly beneficial since t2i already receives higher weight in the loss ($\alpha = 0.75$).
 
-\begin{figure}[h]
+\begin{table}[h]
 \centering
+\caption{Asymmetric queue design for text-staleness-aware contrastive learning.}
+\label{tab:queue}
 \begin{tabular}{c|c}
 \hline
 \textbf{i2t direction} & \textbf{t2i direction} \\
@@ -152,9 +161,7 @@ $\mathbf{I}_{\text{batch}} \mathbf{T}_{\text{batch}}^{\top}$ & $\mathbf{T}_{\tex
 No queue (avoid stale texts) & Image queue (no staleness) \\
 \hline
 \end{tabular}
-\caption{Asymmetric queue design for text-staleness-aware contrastive learning.}
-\label{fig:queue}
-\end{figure}
+\end{table}
 
 We additionally apply false-negative masking: queue entries sharing the same image ID as a batch item are masked out (set to $-\infty$) in the similarity matrix, preventing them from being treated as negatives.
 
