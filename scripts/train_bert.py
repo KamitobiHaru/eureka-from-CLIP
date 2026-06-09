@@ -15,6 +15,7 @@ Prerequisites:
 import argparse
 import os
 import sys
+import csv
 from pathlib import Path
 
 import torch
@@ -283,6 +284,27 @@ def main():
     print(f"  Save best + every 5 epochs")
     print("-" * 60)
 
+    # CSV log for validation metrics
+    val_csv_path = os.path.join(cfg["training"]["checkpoint_dir"], "val_log.csv")
+
+    def _write_val_csv(row_dict):
+        fieldnames = [
+            "type", "step", "epoch", "val_loss",
+            "i2t_R@1", "i2t_R@5", "i2t_R@10",
+            "t2i_R@1", "t2i_R@5", "t2i_R@10",
+            "i2t_medR", "t2i_medR",
+            "ZH_i2t_R@1", "ZH_i2t_R@5", "ZH_i2t_R@10",
+            "ZH_i2t_medR", "ZH_t2i_medR",
+            "train_monitor_loss", "queue_loss", "uniformity",
+            "lr", "best_t2i_R@1",
+        ]
+        write_header = not os.path.exists(val_csv_path)
+        with open(val_csv_path, "a", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=fieldnames)
+            if write_header:
+                w.writeheader()
+            w.writerow({k: v for k, v in row_dict.items() if k in fieldnames})
+
     global_step = trainer.global_step
     for epoch in range(start_epoch, epochs + 1):
         epoch_losses = []
@@ -345,6 +367,19 @@ def main():
 
                 print("  " + " | ".join(log_parts))
 
+                csv_row = {
+                    "type": "step", "step": global_step,
+                    "val_loss": round(val_loss, 4),
+                    "lr": lr, "best_t2i_R@1": best_t2i_r1,
+                }
+                for key in recall_keys:
+                    if key in eval_results:
+                        csv_row[key] = round(float(eval_results[key]), 2)
+                for key in ("i2t_medR", "t2i_medR"):
+                    if key in eval_results:
+                        csv_row[key] = round(float(eval_results[key]), 1)
+                _write_val_csv(csv_row)
+
         # ── Epoch-end validation & save ─────────────────────
         eval_results = trainer.evaluate()
         val_loss = eval_results["val_loss"]
@@ -397,6 +432,33 @@ def main():
 
         print("  " + " | ".join(log_parts))
         print("-" * 60)
+
+        csv_row = {
+            "type": "epoch", "epoch": epoch,
+            "val_loss": round(val_loss, 4),
+            "lr": lr, "best_t2i_R@1": best_t2i_r1,
+            "train_monitor_loss": round(avg_monitor_loss, 4),
+        }
+        if trainer.queue is not None:
+            csv_row["queue_loss"] = round(avg_queue_loss, 4)
+        if epoch_uniform_vals:
+            csv_row["uniformity"] = round(avg_uniform, 4)
+        for key in recall_keys:
+            if key in eval_results:
+                csv_row[key] = round(float(eval_results[key]), 2)
+        for key in ("i2t_medR", "t2i_medR"):
+            if key in eval_results:
+                csv_row[key] = round(float(eval_results[key]), 1)
+        if zh_results:
+            for key in recall_keys:
+                v = zh_results.get(key)
+                if v is not None:
+                    csv_row[f"ZH_{key}"] = round(float(v), 2)
+            for key in ("i2t_medR", "t2i_medR"):
+                v = zh_results.get(key)
+                if v is not None:
+                    csv_row[f"ZH_{key}"] = round(float(v), 1)
+        _write_val_csv(csv_row)
 
     print(f"Training complete. Best t2i_R@1: {best_t2i_r1:.2f}")
 
