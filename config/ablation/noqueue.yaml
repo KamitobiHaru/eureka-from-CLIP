@@ -19,6 +19,8 @@ clip:
   #   openai — OpenAI's original ViT-B/32 trained on WIT-400M
   model: openai
 
+seed: 42
+
 model:
   bert_model_path: ./models/bert-base-uncased
   embed_dim: 512
@@ -38,7 +40,7 @@ training:
   eval_interval: 6000
   step_level_val: false
   num_workers: 16
-  checkpoint_dir: ../weights/no_uniform/ablation_noqueue
+  checkpoint_dir: ../weights/no_uniform_seed42/ablation_noqueue
 
 lora:
   enabled: true

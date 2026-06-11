@@ -48,7 +48,7 @@ training:
   weight_decay: 0.01
   temperature: 0.07     # Initial value for learnable CLIP-style logit_scale
   t2i_weight: 0.75       # >0.5 gives more weight to t2i direction (default 0.5 = symmetric)
-  uniformity_weight: 2  # weight for text uniformity regularizer (0 = disabled)
+  uniformity_weight: 0  # weight for text uniformity regularizer (0 = disabled)
   warmup_steps: 34536
   max_grad_norm: 1.0
   amp: true
@@ -56,7 +56,7 @@ training:
   eval_interval: 6000
   step_level_val: false
   num_workers: 16
-  checkpoint_dir: ../weights/Multilingual_r8_weight0.75_uniformity2
+  checkpoint_dir: ../weights/Multilingual_nouniform
 
 lora:
   enabled: true
