@@ -23,8 +23,10 @@ Evaluation:
 import argparse
 import os
 import sys
+import random
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 import yaml
@@ -254,6 +256,20 @@ def main():
     print(f"Device: {device}")
     print(f"Config: {args.config}")
 
+    # ── Seed ─────────────────────────────────────────────────
+    seed = cfg.get("seed", None)
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        print(f"Seed: {seed}")
+        train_generator = torch.Generator().manual_seed(seed)
+    else:
+        train_generator = None
+
     t_cfg = cfg.get("temporal", {})
 
     # ── Models ──────────────────────────────────────────────────
@@ -275,6 +291,7 @@ def main():
     train_loader = get_mixed_dataloader(
         motion_cache, "train2017", tokenizer,
         batch_size=batch_size, shuffle=True, num_workers=num_workers,
+        generator=train_generator,
     )
     val_loader = get_mixed_dataloader(
         motion_cache, "val2017", tokenizer,

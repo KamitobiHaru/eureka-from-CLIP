@@ -9,7 +9,7 @@ Output format matches ``SequenceDataset`` so that ``sequence_collate_fn``
 
 import json
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -72,6 +72,7 @@ def get_mixed_dataloader(
     shuffle: bool = True,
     num_workers: int = 4,
     max_text_len: int = 77,
+    generator: Optional[torch.Generator] = None,
 ) -> DataLoader:
     """Convenience factory returning a DataLoader over the mixed dataset.
 
@@ -88,4 +89,5 @@ def get_mixed_dataloader(
         num_workers=num_workers,
         collate_fn=sequence_collate_fn(tokenizer, max_text_len=max_text_len),
         pin_memory=True,
+        generator=generator,
     )

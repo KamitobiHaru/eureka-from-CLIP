@@ -81,6 +81,7 @@ def get_flickr_dataloader(
     batch_size: int = 64,
     shuffle: bool = True,
     num_workers: int = 4,
+    generator: Optional[torch.Generator] = None,
 ) -> DataLoader:
     dataset = FlickrDataset(flickr_root, split, embedding_cache, annotation_file)
     return DataLoader(
@@ -90,4 +91,5 @@ def get_flickr_dataloader(
         num_workers=num_workers,
         collate_fn=make_collate_fn(tokenizer),
         pin_memory=True,
+        generator=generator,
     )

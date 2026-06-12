@@ -1,7 +1,7 @@
 import json
 import random
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -192,6 +192,7 @@ def get_sequence_dataloader(
     num_workers: int = 4,
     min_len: int = 3,
     max_len: int = 10,
+    generator: Optional[torch.Generator] = None,
 ) -> DataLoader:
     dataset = SequenceDataset(
         coco_root=coco_root,
@@ -208,4 +209,5 @@ def get_sequence_dataloader(
         num_workers=num_workers,
         collate_fn=sequence_collate_fn(tokenizer),
         pin_memory=True,
+        generator=generator,
     )
