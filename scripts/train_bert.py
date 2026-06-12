@@ -311,6 +311,7 @@ def main():
             "ZH_i2t_R@1", "ZH_i2t_R@5", "ZH_i2t_R@10",
             "ZH_i2t_medR", "ZH_t2i_medR",
             "train_monitor_loss", "queue_loss", "uniformity",
+            "i2t_loss", "t2i_loss",
             "lr", "best_t2i_R@1",
         ]
         write_header = not os.path.exists(val_csv_path)
@@ -325,6 +326,8 @@ def main():
         epoch_losses = []
         epoch_queue_losses = []
         epoch_uniform_vals = []
+        epoch_i2t_losses = []
+        epoch_t2i_losses = []
         pbar = tqdm(train_loader, desc=f"Epoch {epoch:02d}/{epochs}", leave=False)
         for batch in pbar:
             result = trainer.train_batch(*batch)
@@ -351,6 +354,8 @@ def main():
             if i2t_q is not None:
                 postfix["i2t_q"] = f"{i2t_q:.4f}"
                 postfix["t2i_q"] = f"{t2i_q:.4f}"
+                epoch_i2t_losses.append(i2t_q)
+                epoch_t2i_losses.append(t2i_q)
             pbar.set_postfix(**postfix)
 
             # ── Step-level validation ─────────────────────
@@ -458,6 +463,9 @@ def main():
             csv_row["queue_loss"] = round(avg_queue_loss, 4)
         if epoch_uniform_vals:
             csv_row["uniformity"] = round(avg_uniform, 4)
+        if epoch_i2t_losses:
+            csv_row["i2t_loss"] = round(float(sum(epoch_i2t_losses) / len(epoch_i2t_losses)), 4)
+            csv_row["t2i_loss"] = round(float(sum(epoch_t2i_losses) / len(epoch_t2i_losses)), 4)
         for key in recall_keys:
             if key in eval_results:
                 csv_row[key] = round(float(eval_results[key]), 2)
