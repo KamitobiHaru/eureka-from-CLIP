@@ -31,13 +31,17 @@ class TemporalTrainer(Trainer):
     # ── helpers ────────────────────────────────────────────────────────────
 
     def _project_image(self, image_emb: torch.Tensor) -> torch.Tensor:
-        """[B, 512] -> unsqueeze(1) -> temporal -> [B, 512] L2-normed."""
+        """[B, 512] -> unsqueeze(1) -> temporal -> [B, 512] L2-normed.
+
+        No positions are passed during COCO pretraining — there is no meaningful
+        bounding-box signal for single-image retrieval, and the random-init'd
+        pos_proj would corrupt the identity-preserving init.
+        """
         B = image_emb.size(0)
         device = image_emb.device
         frame_embs = image_emb.unsqueeze(1)                     # [B, 1, 512]
         mask = torch.zeros(B, 1, dtype=torch.bool, device=device)
-        positions = torch.tensor([[0.5, 0.5, 1.0]], device=device).expand(B, 1, 3)
-        return self.temporal(frame_embs, mask, positions=positions)
+        return self.temporal(frame_embs, mask, positions=None)
 
     @property
     def _clip_params(self):

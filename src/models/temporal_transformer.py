@@ -10,6 +10,10 @@ class TemporalTransformer(nn.Module):
     Output: [B, D]     L2-normalized temporally-aware scene embedding
 
     Supports variable T via src_key_padding_mask (True = padded position).
+
+    Initialization is identity-preserving for single-frame inputs:
+    at init time, ``temporal(x) ≈ x`` so that pre-aligned CLIP→BERT
+    semantics are not destroyed.
     """
 
     def __init__(
@@ -22,8 +26,9 @@ class TemporalTransformer(nn.Module):
         max_frames: int = 16,
     ):
         super().__init__()
-        # Learnable positional encoding — broadcasts over batch dimension
-        self.pos_encoding = nn.Parameter(torch.randn(1, max_frames, d_model) * 0.02)
+        # Zero-initialised learnable positional encoding — identity init
+        # so a single-frame CLIP embedding is not distorted at step 0.
+        self.pos_encoding = nn.Parameter(torch.zeros(1, max_frames, d_model))
 
         # Projects per-frame (cx, cy, scale) into d_model space so it can be
         # added as a bias, similar to positional encoding.  Small init so it
@@ -43,13 +48,30 @@ class TemporalTransformer(nn.Module):
         )
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
-        self._reset_parameters()
+        # Zero-init transformer sublayer weights → identity mapping
+        self._init_near_identity()
 
-    def _reset_parameters(self):
-        for p in self.parameters():
-            if p.dim() > 1:
-                if p is not self.pos_proj.weight:
-                    nn.init.xavier_uniform_(p)
+    def _init_near_identity(self):
+        """Initialise sublayer weights so ``x + sublayer(norm(x)) ≈ x``.
+
+        Attention projections → **zero**: output = 0 regardless of input,
+        so the residual path is pure identity.
+
+        FFN weights → **tiny random** (std=1e-5): output ≈ 1e-10 (negligible),
+        but the small non-zero values allow gradients to flow backward
+        through both ``linear1`` and ``linear2``, avoiding the dead-neuron
+        problem of exact zero init.
+        """
+        for layer in self.encoder.layers:
+            # Self-attention: zero → output = 0
+            nn.init.zeros_(layer.self_attn.in_proj_weight)
+            nn.init.zeros_(layer.self_attn.out_proj.weight)
+            nn.init.zeros_(layer.self_attn.out_proj.bias)
+            # FFN: tiny random → gradients flow but output ≈ 0
+            nn.init.normal_(layer.linear1.weight, std=1e-5)
+            nn.init.zeros_(layer.linear1.bias)
+            nn.init.normal_(layer.linear2.weight, std=1e-5)
+            nn.init.zeros_(layer.linear2.bias)
 
     def forward(
         self,

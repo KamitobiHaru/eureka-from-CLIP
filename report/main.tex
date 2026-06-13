@@ -260,24 +260,24 @@ These results demonstrate that the largest performance gain in our framework ori
 
 \subsection{Why Is Loss Reweighting Less Important Than Expected?}
 
-The relatively modest impact of $\alpha$ can be understood by examining the loss dynamics during training. The image queue supplies a large number of additional negatives exclusively for the text-to-image direction, making the t2i task inherently harder than i2t within each batch. This asymmetry originates from the large image queue, which introduces tens of thousands of additional image negatives for the t2i branch. Consequently, the raw t2i loss is consistently larger than the corresponding i2t loss during training. Figure~\ref{fig:loss_ratio} shows the loss ratio $L_{t2i}/L_{i2t}$ over the full training trajectory: the ratio rises from approximately 3$\times$ in the first epoch to over 13$\times$ by the final epoch, with a mean of $11.86\times$ across all epochs. Even with $\alpha{=}0.50$ (equal weighting), the optimization pressure is already biased toward the t2i branch. Increasing $\alpha$ further therefore yields diminishing returns.
+The relatively modest impact of $\alpha$ can be understood by examining the loss dynamics during training. The image queue supplies a large number of additional negatives exclusively for the text-to-image direction, making the t2i task inherently harder than i2t within each batch. This asymmetry originates from the large image queue, which introduces tens of thousands of additional image negatives for the t2i branch. Consequently, the raw t2i loss is consistently larger than the corresponding i2t loss during training. Figure~\ref{fig:loss_ratio} plots the unweighted loss ratio $L_{t2i}/L_{i2t}$ over the full training trajectory (with $\alpha{=}0.75$). Notably, the ratio rises from approximately 3.3$\times$ in the first epoch to over 13.5$\times$ by convergence, with a mean of $11.86\times$ across all epochs. This trend is counterintuitive: despite assigning a larger optimization weight ($\alpha{=}0.75$) to the t2i branch, the raw t2i loss not only remains higher but continues to diverge from i2t throughout training. If loss weighting were the dominant factor, one would expect the raw t2i loss to approach the i2t loss as training progresses. Instead, the growing ratio indicates that the queue-induced difficulty overwhelms the compensation from explicit reweighting, confirming that queue asymmetry --- rather than loss weighting --- is the primary driver of t2i optimization bias.
 
 This observation explains why the $\alpha{=}0.50$ configuration (Table~\ref{tab:alpha}) achieves 60.26 t2i R@1, only 0.22 points below $\alpha{=}0.75$. The queue, by asymmetrically supplying more negatives to t2i, serves as an implicit regularizer that reduces the need for explicit loss weighting.
-
-\subsection{Resource Constraints Naturally Lead to the Asymmetric Design}
-
-The asymmetric queue is not an arbitrary design choice. Rather, it emerges naturally from our resource-constrained training setup: freezing the CLIP vision encoder keeps image embeddings perpetually fresh, while the evolving text encoder renders queued text embeddings stale. Under this setup, retaining only the image queue becomes the most natural solution.
 
 \begin{figure}[h]
 \centering
 \includegraphics[width=0.72\textwidth]{figures/loss_ratio.pdf}
 \caption{
 \label{fig:loss_ratio}
-Ratio of raw text-to-image loss to image-to-text loss $L_{t2i}/L_{i2t}$ during training.
-The ratio increases from approximately 3$\times$ in the first epoch to over 13$\times$ by convergence, with a mean of 11.86$\times$ (dashed line).
-This persistent asymmetry explains why equal loss weighting ($\alpha{=}0.50$) already biases optimization toward t2i.
+Ratio of raw (unweighted) text-to-image loss to image-to-text loss $L_{t2i}/L_{i2t}$ during training with $\alpha{=}0.75$.
+Despite the explicit optimization bias favoring t2i, the ratio increases from approximately 3.3$\times$ in the first epoch to over 13.5$\times$ by convergence, with a mean of $11.86\times$ (dashed line).
+This growing gap demonstrates that the queue-induced asymmetry dominates the effect of loss reweighting.
 }
 \end{figure}
+
+\subsection{Resource Constraints Naturally Lead to the Asymmetric Design}
+
+The asymmetric queue is not an arbitrary design choice. Rather, it emerges naturally from our resource-constrained training setup: freezing the CLIP vision encoder keeps image embeddings perpetually fresh, while the evolving text encoder renders queued text embeddings stale. Under this setup, retaining only the image queue becomes the most natural solution.
 
 \section{Limitations}
 
