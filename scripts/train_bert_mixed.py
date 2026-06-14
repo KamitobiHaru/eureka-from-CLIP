@@ -1,6 +1,10 @@
 # Stage 1b: Joint BERT training on COCO images + MSR-VTT videos.
+# COCO images (~591K caption pairs) and MSR-VTT videos (~180K caption pairs)
+# are combined into a single dataset at their natural ratio (~3.3:1).
+# The DataLoader sees all ~771K pairs each epoch (~12045 batches at bs=64).
+#
 # Video: frozen CLIP mean pool (never stale in queue)
-# Image: frozen CLIP single embedding (never stale in queue)
+# Image: frozen CLIP single embedding, treated as 1-frame "video" (never stale)
 # Text:  BERT + LoRA (trainable)
 # Queue: mask_stale_texts=True → t2i direction gets full queue benefit
 #
@@ -33,6 +37,23 @@ from src.training.evaluation import compute_recall_metrics
 FLICKR_ROOT = Path("./dataset_annotation")
 
 
+class _ImageAsVideoDataset(torch.utils.data.Dataset):
+    """Wrap CocoDataset items as 1-frame 'videos' compatible with VideoDataset format.
+
+    COCO returns (image_emb, caption, image_id) where image_emb is (512,).
+    This wrapper unsqueezes to (1, 512) so video_collate_fn can handle it.
+    """
+    def __init__(self, coco_dataset):
+        self.ds = coco_dataset
+
+    def __len__(self):
+        return len(self.ds)
+
+    def __getitem__(self, idx):
+        image_emb, caption, image_id = self.ds[idx]
+        return image_emb.unsqueeze(0), caption, image_id
+
+
 def _build_bert(cfg, device) -> BertEncoder:
     bert_path = cfg["model"]["bert_model_path"]
     lora_cfg = cfg.get("lora", {})
@@ -44,14 +65,18 @@ def _build_bert(cfg, device) -> BertEncoder:
         initial_temperature=cfg["training"]["temperature"],
     ).to(device)
 
-    ckpt_path = cfg["checkpoint"]["bert_pretrain"]
-    print(f"Loading BERT from: {ckpt_path}")
-    ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
-    missing, unexpected = model.load_state_dict(ckpt["model_state_dict"], strict=False)
-    if missing:
-        print(f"  Missing keys: {missing}")
-    if unexpected:
-        print(f"  Unexpected keys: {unexpected}")
+    ckpt_cfg = cfg.get("checkpoint", {})
+    ckpt_path = ckpt_cfg.get("bert_pretrain")
+    if ckpt_path:
+        print(f"Loading BERT from: {ckpt_path}")
+        ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
+        missing, unexpected = model.load_state_dict(ckpt["model_state_dict"], strict=False)
+        if missing:
+            print(f"  Missing keys: {missing}")
+        if unexpected:
+            print(f"  Unexpected keys: {unexpected}")
+    else:
+        print("  No pretrained checkpoint — starting from raw BERT-base-uncased + random init")
 
     total = sum(p.numel() for p in model.parameters())
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -60,7 +85,7 @@ def _build_bert(cfg, device) -> BertEncoder:
 
 
 def _build_dataloaders(cfg):
-    """Build COCO train + MSR-VTT train loaders, and MSVD eval loader."""
+    """Build a single combined COCO + MSR-VTT train loader, plus MSVD eval loader."""
     t_cfg = cfg["training"]
     bs = t_cfg["batch_size"]
     nw = t_cfg["num_workers"]
@@ -76,15 +101,6 @@ def _build_dataloaders(cfg):
         embedding_cache=coco_cfg["embedding_cache"],
         annotations_dir=coco_cfg.get("annotations_dir", "annotations_trainval2017/annotations"),
     )
-    coco_loader = torch.utils.data.DataLoader(
-        coco_dataset,
-        batch_size=bs,
-        shuffle=True,
-        num_workers=nw,
-        collate_fn=make_collate_fn(tokenizer),
-        pin_memory=True,
-        drop_last=True,
-    )
     print(f"  COCO train:     {len(coco_dataset):,} caption-image pairs")
 
     # ── MSR-VTT train ──
@@ -93,8 +109,15 @@ def _build_dataloaders(cfg):
         os.path.join(msrvtt_cfg["root"], msrvtt_cfg["train_annotation"]),
         msrvtt_cfg["frame_cache"],
     )
-    msrvtt_loader = torch.utils.data.DataLoader(
+    print(f"  MSR-VTT train:  {len(msrvtt_dataset):,} caption-video pairs")
+
+    # ── Combined loader (COCO images as 1-frame videos, natural ratio ~3.3:1) ──
+    combined = torch.utils.data.ConcatDataset([
+        _ImageAsVideoDataset(coco_dataset),
         msrvtt_dataset,
+    ])
+    combined_loader = torch.utils.data.DataLoader(
+        combined,
         batch_size=bs,
         shuffle=True,
         num_workers=nw,
@@ -102,7 +125,10 @@ def _build_dataloaders(cfg):
         pin_memory=True,
         drop_last=True,
     )
-    print(f"  MSR-VTT train:  {len(msrvtt_dataset):,} caption-video pairs")
+    coco_ratio = len(coco_dataset) / len(combined)
+    print(f"  Combined train: {len(combined):,} pairs, "
+          f"{coco_ratio:.1%} COCO / {(1-coco_ratio):.1%} MSR-VTT, "
+          f"{len(combined_loader):,} batches/epoch")
 
     # ── MSVD eval ──
     msvd_cfg = cfg["data"]["msvd"]
@@ -120,7 +146,7 @@ def _build_dataloaders(cfg):
     )
     print(f"  MSVD eval:     {len(msvd_dataset):,} caption-video pairs")
 
-    return coco_loader, msrvtt_loader, msvd_loader, tokenizer
+    return combined_loader, msvd_loader, tokenizer
 
 
 def mean_pool_video(frame_embs, padding_mask):
@@ -237,7 +263,7 @@ def main():
     bert_model = _build_bert(cfg, device)
 
     # ── Data ──
-    coco_loader, msrvtt_loader, msvd_loader, tokenizer = _build_dataloaders(cfg)
+    train_loader, msvd_loader, tokenizer = _build_dataloaders(cfg)
 
     # ── Queue & Loss ──
     q_cfg = cfg.get("queue", {})
@@ -270,7 +296,7 @@ def main():
     )
     print(f"  BERT LR: {t_cfg['lr']:.2e}")
 
-    total_steps = (len(coco_loader) + len(msrvtt_loader)) * t_cfg["epochs"]
+    total_steps = len(train_loader) * t_cfg["epochs"]
     warmup_steps = t_cfg.get("warmup_steps", 2000)
 
     def lr_lambda(step):
@@ -286,6 +312,18 @@ def main():
 
     ckpt_dir = t_cfg["checkpoint_dir"]
     os.makedirs(ckpt_dir, exist_ok=True)
+
+    # ── CSV log ──
+    csv_path = os.path.join(ckpt_dir, "metrics.csv")
+    csv_header_written = os.path.exists(csv_path)
+    csv_fields = [
+        "epoch", "global_step", "loss", "i2t_loss", "t2i_loss",
+        "msvd_t2i_R1", "msvd_t2i_R5", "msvd_t2i_R10",
+        "msvd_i2t_R1", "msvd_i2t_R5", "msvd_i2t_R10",
+        "flickr_t2i_R1", "flickr_t2i_R5", "flickr_t2i_R10",
+        "flickr_i2t_R1", "flickr_i2t_R5", "flickr_i2t_R10",
+        "lr", "temperature",
+    ]
 
     # ── Resume ──
     start_epoch = 1
@@ -309,86 +347,114 @@ def main():
         best_flickr_t2i_r1 = ckpt.get("best_flickr_t2i_r1", -1.0)
         print(f"  Resumed at epoch {ckpt.get('epoch', 0)}, step {global_step}")
 
-    # ── Mixing schedule ──
-    mix_ratio = t_cfg.get("coco_mix_ratio", 0.5)
-    # Interleave: after every COCO batch, process `msrvtt_per_coco` MSR-VTT batches
-    msrvtt_per_coco = max(1, int((1 - mix_ratio) / mix_ratio))
-    print(f"\n  COCO mix ratio: {mix_ratio:.2f} ({msrvtt_per_coco} MSR-VTT per COCO batch)")
-
     epochs = t_cfg["epochs"]
-    print(f"Training: {epochs} epochs, eval each epoch: MSVD + Flickr30k")
+    mem_log_interval = 200  # print memory stats every N batches (first epoch only)
+    print(f"\nTraining: {epochs} epochs, {len(train_loader):,} batches/epoch, "
+          f"eval each epoch: MSVD + Flickr30k")
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
     print("-" * 60)
 
     for epoch in range(start_epoch, epochs + 1):
         bert_model.train()
         epoch_losses = []
-        coco_iter = iter(coco_loader)
-        pbar = tqdm(msrvtt_loader, desc=f"Epoch {epoch:02d}/{epochs}", leave=False)
+        epoch_i2t_losses = []
+        epoch_t2i_losses = []
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch:02d}/{epochs}", leave=False)
 
-        for msrvtt_batch in pbar:
-            # 1) Process MSR-VTT batch
-            frame_embs, padding_mask, input_ids, attention_mask, video_ids = msrvtt_batch
+        for batch in pbar:
+            frame_embs, padding_mask, input_ids, attention_mask, video_ids = batch
             frame_embs = frame_embs.to(device)
             padding_mask = padding_mask.to(device)
             input_ids = input_ids.to(device)
             attention_mask = attention_mask.to(device)
 
+            # ── Forward ──
             video_emb = mean_pool_video(frame_embs, padding_mask)
             text_emb = bert_model(input_ids, attention_mask)
 
-            loss = _forward_loss(video_emb, text_emb, video_ids,
-                                 bert_model, loss_fn, eval_loss_fn, scaler)
-            _backward_step(loss, bert_params, optimizer, scheduler, scaler, t_cfg)
+            if scaler:
+                with torch.amp.autocast("cuda"):
+                    if isinstance(loss_fn, QueueInfoNCE):
+                        loss = loss_fn(
+                            video_emb, text_emb, video_ids,
+                            logit_scale=bert_model.logit_scale,
+                        )
+                        with torch.no_grad():
+                            loss_inbatch = eval_loss_fn(
+                                video_emb, text_emb,
+                                logit_scale=bert_model.logit_scale,
+                            )
+                    else:
+                        loss = loss_fn(
+                            video_emb, text_emb,
+                            logit_scale=bert_model.logit_scale,
+                        )
+
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(bert_params, t_cfg["max_grad_norm"])
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                if isinstance(loss_fn, QueueInfoNCE):
+                    loss = loss_fn(
+                        video_emb, text_emb, video_ids,
+                        logit_scale=bert_model.logit_scale,
+                    )
+                    with torch.no_grad():
+                        loss_inbatch = eval_loss_fn(
+                            video_emb, text_emb,
+                            logit_scale=bert_model.logit_scale,
+                        )
+                else:
+                    loss = loss_fn(
+                        video_emb, text_emb,
+                        logit_scale=bert_model.logit_scale,
+                    )
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(bert_params, t_cfg["max_grad_norm"])
+                optimizer.step()
+
+            optimizer.zero_grad()
+            scheduler.step()
             global_step += 1
 
+            # Enqueue after loss (video from frozen CLIP → never stale)
             if queue is not None and video_ids is not None:
                 queue.enqueue(video_emb, text_emb, video_ids)
 
-            monitor_loss = _get_monitor_loss(loss, loss_fn)
+            # Logging
+            monitor_loss = loss_inbatch.item() if isinstance(loss_fn, QueueInfoNCE) else loss.item()
             epoch_losses.append(monitor_loss)
 
-            # 2) Process COCO batch (interleaved)
-            try:
-                coco_batch = next(coco_iter)
-            except StopIteration:
-                coco_iter = iter(coco_loader)
-                coco_batch = next(coco_iter)
+            # Track per-direction losses (unweighted, in-batch)
+            i2t_val = getattr(loss_fn, "_last_i2t", None)
+            t2i_val = getattr(loss_fn, "_last_t2i", None)
+            if i2t_val is not None:
+                epoch_i2t_losses.append(i2t_val.item())
+            if t2i_val is not None:
+                epoch_t2i_losses.append(t2i_val.item())
 
-            image_emb, coco_input_ids, coco_attn_mask, coco_image_ids = coco_batch
-            image_emb = image_emb.to(device)
-            coco_input_ids = coco_input_ids.to(device)
-            coco_attn_mask = coco_attn_mask.to(device)
-
-            # COCO: single image embedding, already L2-normed from CocoDataset
-            coco_text_emb = bert_model(coco_input_ids, coco_attn_mask)
-
-            loss = _forward_loss(image_emb, coco_text_emb, coco_image_ids,
-                                 bert_model, loss_fn, eval_loss_fn, scaler)
-            _backward_step(loss, bert_params, optimizer, scheduler, scaler, t_cfg)
-            global_step += 1
-
-            if queue is not None and coco_image_ids is not None:
-                queue.enqueue(image_emb, coco_text_emb, coco_image_ids)
-
-            coco_loss = _get_monitor_loss(loss, loss_fn)
-            epoch_losses.append(coco_loss)
-
-            # Logging
-            postfix = {
-                "loss": f"{monitor_loss:.3f}",
-                "coco": f"{coco_loss:.3f}",
-                "Q": len(queue) if queue is not None else 0,
-            }
+            postfix = {"loss": f"{monitor_loss:.3f}"}
+            if queue is not None:
+                postfix["Q"] = len(queue)
             i2t_q = getattr(loss_fn, "_last_i2t", None)
             t2i_q = getattr(loss_fn, "_last_t2i", None)
             if i2t_q is not None:
                 postfix["i2t"] = f"{i2t_q:.3f}"
                 postfix["t2i"] = f"{t2i_q:.3f}"
+            # Memory stats every 200 steps (first epoch only)
+            if torch.cuda.is_available() and epoch == start_epoch and global_step % mem_log_interval == 0:
+                postfix["mem"] = (f"{torch.cuda.memory_allocated()/1024**3:.1f}G/"
+                                  f"{torch.cuda.max_memory_allocated()/1024**3:.1f}G")
             pbar.set_postfix(**postfix)
 
         # ── Epoch-end: MSVD + Flickr30k evaluation ──
         print(f"  Epoch {epoch:02d}/{epochs} — evaluating...")
         avg_loss = sum(epoch_losses) / len(epoch_losses)
+        avg_i2t = sum(epoch_i2t_losses) / len(epoch_i2t_losses) if epoch_i2t_losses else 0.0
+        avg_t2i = sum(epoch_t2i_losses) / len(epoch_t2i_losses) if epoch_t2i_losses else 0.0
 
         msvd_results = evaluate_msvd(bert_model, msvd_loader, device)
         torch.cuda.empty_cache()
@@ -405,6 +471,7 @@ def main():
         log_parts = [
             f"Epoch {epoch:02d}/{epochs}",
             f"Loss: {avg_loss:.4f}",
+            f"i2t:{avg_i2t:.3f} t2i:{avg_t2i:.3f}",
             f"MSVD t2i_R@1: {msvd_results.get('t2i_R@1', 0):.2f}",
             f"MSVD i2t_R@1: {msvd_results.get('i2t_R@1', 0):.2f}",
             f"Flickr t2i_R@1: {flickr_results.get('t2i_R@1', 0):.2f}",
@@ -446,59 +513,36 @@ def main():
         print("  " + " | ".join(log_parts))
         print("-" * 60)
 
+        # ── CSV log ──
+        row = {
+            "epoch": epoch,
+            "global_step": global_step,
+            "loss": f"{avg_loss:.4f}",
+            "i2t_loss": f"{avg_i2t:.4f}",
+            "t2i_loss": f"{avg_t2i:.4f}",
+            "msvd_t2i_R1": f"{msvd_results.get('t2i_R@1', 0):.2f}",
+            "msvd_t2i_R5": f"{msvd_results.get('t2i_R@5', 0):.2f}",
+            "msvd_t2i_R10": f"{msvd_results.get('t2i_R@10', 0):.2f}",
+            "msvd_i2t_R1": f"{msvd_results.get('i2t_R@1', 0):.2f}",
+            "msvd_i2t_R5": f"{msvd_results.get('i2t_R@5', 0):.2f}",
+            "msvd_i2t_R10": f"{msvd_results.get('i2t_R@10', 0):.2f}",
+            "flickr_t2i_R1": f"{flickr_results.get('t2i_R@1', 0):.2f}",
+            "flickr_t2i_R5": f"{flickr_results.get('t2i_R@5', 0):.2f}",
+            "flickr_t2i_R10": f"{flickr_results.get('t2i_R@10', 0):.2f}",
+            "flickr_i2t_R1": f"{flickr_results.get('i2t_R@1', 0):.2f}",
+            "flickr_i2t_R5": f"{flickr_results.get('i2t_R@5', 0):.2f}",
+            "flickr_i2t_R10": f"{flickr_results.get('i2t_R@10', 0):.2f}",
+            "lr": f"{optimizer.param_groups[0]['lr']:.2e}",
+            "temperature": f"{bert_model.get_temperature():.4f}",
+        }
+        with open(csv_path, "a") as f:
+            if not csv_header_written:
+                f.write(",".join(csv_fields) + "\n")
+                csv_header_written = True
+            f.write(",".join(str(row[k]) for k in csv_fields) + "\n")
+
     print(f"Training complete. Best MSVD t2i_R@1: {best_msvd_t2i_r1:.2f}, "
           f"Best Flickr t2i_R@1: {best_flickr_t2i_r1:.2f}")
-
-
-# ── Training helpers (shared by both data sources) ─────────────────────────
-
-def _forward_loss(video_emb, text_emb, video_ids, bert_model, loss_fn,
-                  eval_loss_fn, scaler):
-    if scaler:
-        with torch.amp.autocast("cuda"):
-            if isinstance(loss_fn, QueueInfoNCE):
-                loss = loss_fn(video_emb, text_emb, video_ids,
-                               logit_scale=bert_model.logit_scale)
-                with torch.no_grad():
-                    _ = eval_loss_fn(video_emb, text_emb,
-                                     logit_scale=bert_model.logit_scale)
-            else:
-                loss = loss_fn(video_emb, text_emb,
-                               logit_scale=bert_model.logit_scale)
-        return loss
-    else:
-        if isinstance(loss_fn, QueueInfoNCE):
-            loss = loss_fn(video_emb, text_emb, video_ids,
-                           logit_scale=bert_model.logit_scale)
-            with torch.no_grad():
-                _ = eval_loss_fn(video_emb, text_emb,
-                                 logit_scale=bert_model.logit_scale)
-        else:
-            loss = loss_fn(video_emb, text_emb,
-                           logit_scale=bert_model.logit_scale)
-        return loss
-
-
-def _backward_step(loss, bert_params, optimizer, scheduler, scaler, t_cfg):
-    if scaler:
-        scaler.scale(loss).backward()
-        scaler.unscale_(optimizer)
-        torch.nn.utils.clip_grad_norm_(bert_params, t_cfg["max_grad_norm"])
-        scaler.step(optimizer)
-        scaler.update()
-    else:
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(bert_params, t_cfg["max_grad_norm"])
-        optimizer.step()
-
-    optimizer.zero_grad()
-    scheduler.step()
-
-
-def _get_monitor_loss(loss, loss_fn):
-    if isinstance(loss_fn, QueueInfoNCE):
-        return getattr(loss_fn, "_last_i2t", loss.item())
-    return loss.item()
 
 
 if __name__ == "__main__":

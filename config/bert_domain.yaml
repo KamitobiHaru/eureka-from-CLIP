@@ -16,17 +16,17 @@ model:
   bert_model_path: ./models/bert-base-uncased
 
 training:
-  batch_size: 64
+  batch_size: 128
   epochs: 30
-  lr: 0.000005
+  lr: 0.000001
   t2i_weight: 0.75
   weight_decay: 0.01
   temperature: 0.07
   max_grad_norm: 1.0
-  warmup_steps: 2000
+  warmup_steps: 34536
   amp: true
   num_workers: 8
-  checkpoint_dir: /data2/zsy/weights/clip/bert_domain_stage1
+  checkpoint_dir: /data2/zsy/weights/clip/bert_domain_stage1_1e-6
 
 lora:
   enabled: true

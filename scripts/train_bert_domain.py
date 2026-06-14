@@ -256,6 +256,18 @@ def main():
     ckpt_dir = t_cfg["checkpoint_dir"]
     os.makedirs(ckpt_dir, exist_ok=True)
 
+    # ── CSV log ──
+    csv_path = os.path.join(ckpt_dir, "metrics.csv")
+    csv_header_written = os.path.exists(csv_path)
+    csv_fields = [
+        "epoch", "global_step", "loss", "i2t_loss", "t2i_loss",
+        "msvd_t2i_R1", "msvd_t2i_R5", "msvd_t2i_R10",
+        "msvd_i2t_R1", "msvd_i2t_R5", "msvd_i2t_R10",
+        "flickr_t2i_R1", "flickr_t2i_R5", "flickr_t2i_R10",
+        "flickr_i2t_R1", "flickr_i2t_R5", "flickr_i2t_R10",
+        "lr", "temperature",
+    ]
+
     # ── Resume ──
     start_epoch = 1
     global_step = 0
@@ -286,6 +298,8 @@ def main():
     for epoch in range(start_epoch, epochs + 1):
         bert_model.train()
         epoch_losses = []
+        epoch_i2t_losses = []
+        epoch_t2i_losses = []
         pbar = tqdm(train_loader, desc=f"Epoch {epoch:02d}/{epochs}", leave=False)
 
         for batch in pbar:
@@ -354,6 +368,15 @@ def main():
             # Logging
             monitor_loss = loss_inbatch.item() if isinstance(loss_fn, QueueInfoNCE) else loss.item()
             epoch_losses.append(monitor_loss)
+
+            # Track per-direction losses (unweighted, in-batch)
+            i2t_val = getattr(loss_fn, "_last_i2t", None)
+            t2i_val = getattr(loss_fn, "_last_t2i", None)
+            if i2t_val is not None:
+                epoch_i2t_losses.append(i2t_val.item())
+            if t2i_val is not None:
+                epoch_t2i_losses.append(t2i_val.item())
+
             postfix = {"loss": f"{monitor_loss:.4f}"}
             if queue is not None:
                 postfix["Q"] = len(queue)
@@ -367,6 +390,8 @@ def main():
         # ── Epoch-end: MSVD + Flickr30k evaluation ──
         print(f"  Epoch {epoch:02d}/{epochs} — evaluating...")
         avg_loss = sum(epoch_losses) / len(epoch_losses)
+        avg_i2t = sum(epoch_i2t_losses) / len(epoch_i2t_losses) if epoch_i2t_losses else 0.0
+        avg_t2i = sum(epoch_t2i_losses) / len(epoch_t2i_losses) if epoch_t2i_losses else 0.0
 
         msvd_results = evaluate_msvd(bert_model, msvd_loader, device)
         torch.cuda.empty_cache()
@@ -383,6 +408,7 @@ def main():
         log_parts = [
             f"Epoch {epoch:02d}/{epochs}",
             f"Loss: {avg_loss:.4f}",
+            f"i2t:{avg_i2t:.3f} t2i:{avg_t2i:.3f}",
             f"MSVD t2i_R@1: {msvd_results.get('t2i_R@1', 0):.2f}",
             f"MSVD i2t_R@1: {msvd_results.get('i2t_R@1', 0):.2f}",
             f"Flickr t2i_R@1: {flickr_results.get('t2i_R@1', 0):.2f}",
@@ -425,6 +451,34 @@ def main():
 
         print("  " + " | ".join(log_parts))
         print("-" * 60)
+
+        # ── CSV log ──
+        row = {
+            "epoch": epoch,
+            "global_step": global_step,
+            "loss": f"{avg_loss:.4f}",
+            "i2t_loss": f"{avg_i2t:.4f}",
+            "t2i_loss": f"{avg_t2i:.4f}",
+            "msvd_t2i_R1": f"{msvd_results.get('t2i_R@1', 0):.2f}",
+            "msvd_t2i_R5": f"{msvd_results.get('t2i_R@5', 0):.2f}",
+            "msvd_t2i_R10": f"{msvd_results.get('t2i_R@10', 0):.2f}",
+            "msvd_i2t_R1": f"{msvd_results.get('i2t_R@1', 0):.2f}",
+            "msvd_i2t_R5": f"{msvd_results.get('i2t_R@5', 0):.2f}",
+            "msvd_i2t_R10": f"{msvd_results.get('i2t_R@10', 0):.2f}",
+            "flickr_t2i_R1": f"{flickr_results.get('t2i_R@1', 0):.2f}",
+            "flickr_t2i_R5": f"{flickr_results.get('t2i_R@5', 0):.2f}",
+            "flickr_t2i_R10": f"{flickr_results.get('t2i_R@10', 0):.2f}",
+            "flickr_i2t_R1": f"{flickr_results.get('i2t_R@1', 0):.2f}",
+            "flickr_i2t_R5": f"{flickr_results.get('i2t_R@5', 0):.2f}",
+            "flickr_i2t_R10": f"{flickr_results.get('i2t_R@10', 0):.2f}",
+            "lr": f"{optimizer.param_groups[0]['lr']:.2e}",
+            "temperature": f"{bert_model.get_temperature():.4f}",
+        }
+        with open(csv_path, "a") as f:
+            if not csv_header_written:
+                f.write(",".join(csv_fields) + "\n")
+                csv_header_written = True
+            f.write(",".join(str(row[k]) for k in csv_fields) + "\n")
 
     print(f"Training complete. Best MSVD t2i_R@1: {best_msvd_t2i_r1:.2f}, "
           f"Best Flickr t2i_R@1: {best_flickr_t2i_r1:.2f}")
