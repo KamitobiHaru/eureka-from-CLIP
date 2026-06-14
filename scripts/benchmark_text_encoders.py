@@ -108,7 +108,7 @@ def encode_texts_bert(texts, bert_model, tokenizer, device, batch_size=128):
 
 # ── dataset evaluators ──────────────────────────────────────────────────────
 
-def evaluate_msrvtt(bert_model, clip_text_model, clip_tokenizer, device):
+def evaluate_msrvtt(bert_model, clip_text_model, clip_tokenizer, device, method_key="BERT"):
     """MSR-VTT 1K-A test set: 1000 videos × 1 caption each."""
     print("\n" + "=" * 55)
     print("  MSR-VTT 1K-A test")
@@ -131,17 +131,17 @@ def evaluate_msrvtt(bert_model, clip_text_model, clip_tokenizer, device):
     for k in ["i2t_R@1", "i2t_R@5", "i2t_R@10", "t2i_R@1", "t2i_R@5", "t2i_R@10"]:
         print(f"  CLIP  {k}: {r_clip.get(k, 0):.2f}")
 
-    # BERT text
+    # BERT/MLP text
     torch.cuda.empty_cache()
     text_bert = encode_texts_bert(captions, bert_model, BERT_TOKENIZER, device)
     r_bert = compute_recall_metrics(video_emb, text_bert, video_ids)
     for k in ["i2t_R@1", "i2t_R@5", "i2t_R@10", "t2i_R@1", "t2i_R@5", "t2i_R@10"]:
-        print(f"  BERT  {k}: {r_bert.get(k, 0):.2f}")
+        print(f"  {method_key:<5} {k}: {r_bert.get(k, 0):.2f}")
 
-    return {"CLIP": r_clip, "BERT": r_bert}
+    return {"CLIP": r_clip, method_key: r_bert}
 
 
-def evaluate_msvd(bert_model, clip_text_model, clip_tokenizer, device):
+def evaluate_msvd(bert_model, clip_text_model, clip_tokenizer, device, method_key="BERT"):
     """MSVD zero-shot: 1970 videos, each with ~20 captions."""
     print("\n" + "=" * 55)
     print("  MSVD")
@@ -182,20 +182,20 @@ def evaluate_msvd(bert_model, clip_text_model, clip_tokenizer, device):
     for k in ["i2t_R@1", "i2t_R@5", "i2t_R@10", "t2i_R@1", "t2i_R@5", "t2i_R@10"]:
         print(f"  CLIP  {k}: {r_clip.get(k, 0):.2f}")
 
-    # BERT text
-    print("  Encoding captions with BERT text encoder...")
+    # BERT/MLP text
+    print(f"  Encoding captions with {method_key} text encoder...")
     text_bert = encode_texts_bert(all_captions, bert_model, BERT_TOKENIZER,
                                   device, batch_size=128)
     torch.cuda.empty_cache()
-    print("  Computing recall (BERT)...")
+    print(f"  Computing recall ({method_key})...")
     r_bert = compute_recall_metrics(pair_video_emb, text_bert, video_ids)
     for k in ["i2t_R@1", "i2t_R@5", "i2t_R@10", "t2i_R@1", "t2i_R@5", "t2i_R@10"]:
-        print(f"  BERT  {k}: {r_bert.get(k, 0):.2f}")
+        print(f"  {method_key:<5} {k}: {r_bert.get(k, 0):.2f}")
 
-    return {"CLIP": r_clip, "BERT": r_bert}
+    return {"CLIP": r_clip, method_key: r_bert}
 
 
-def evaluate_flickr30k(bert_model, clip_model, clip_tokenizer, device):
+def evaluate_flickr30k(bert_model, clip_model, clip_tokenizer, device, method_key="BERT"):
     """Flickr30k test (1K): 1000 images × 5 captions each.
 
     Uses precomputed CLIP image embeddings from data/flickr30k/clip_embeddings/
@@ -244,8 +244,6 @@ def evaluate_flickr30k(bert_model, clip_model, clip_tokenizer, device):
     if text_cache_path.exists():
         print("  Loading precomputed CLIP text embeddings...")
         cached = torch.load(text_cache_path, weights_only=True)
-        # cached is dict with keys like image_id; we need to align with pairs
-        # Format: need to check what the keys/layout is
         print(f"  Cached type: {type(cached)}")
         if isinstance(cached, dict):
             print(f"  Cached keys: {list(cached.keys())[:3]}")
@@ -282,7 +280,7 @@ def evaluate_flickr30k(bert_model, clip_model, clip_tokenizer, device):
 
     print(f"  Image embeddings: {image_embs.shape}")
     print(f"  CLIP text:        {text_clip_all.shape}")
-    print(f"  BERT text:        {text_bert_all.shape}")
+    print(f"  {method_key} text:        {text_bert_all.shape}")
 
     r_clip = compute_recall_metrics(image_embs, text_clip_all, all_image_ids)
     for k in ["i2t_R@1", "i2t_R@5", "i2t_R@10", "t2i_R@1", "t2i_R@5", "t2i_R@10"]:
@@ -290,9 +288,9 @@ def evaluate_flickr30k(bert_model, clip_model, clip_tokenizer, device):
 
     r_bert = compute_recall_metrics(image_embs, text_bert_all, all_image_ids)
     for k in ["i2t_R@1", "i2t_R@5", "i2t_R@10", "t2i_R@1", "t2i_R@5", "t2i_R@10"]:
-        print(f"  BERT  {k}: {r_bert.get(k, 0):.2f}")
+        print(f"  {method_key:<5} {k}: {r_bert.get(k, 0):.2f}")
 
-    return {"CLIP": r_clip, "BERT": r_bert}
+    return {"CLIP": r_clip, method_key: r_bert}
 
 
 # ── global bert tokenizer ──────────────────────────────────────────────────
@@ -305,6 +303,8 @@ BERT_TOKENIZER = BertTokenizer.from_pretrained(str(BERT_MODEL_PATH))
 def main():
     parser = argparse.ArgumentParser(description="Benchmark CLIP vs BERT text encoder")
     parser.add_argument("--bert_checkpoint", default="/data2/zsy/weights/clip/bert_epoch26_t2i60.5.pt")
+    parser.add_argument("--encoder_type", default="bert", choices=["bert", "mlp"],
+                        help="'bert' = BertEncoder+LoRA (default), 'mlp' = MLPBertEncoder (ablation)")
     parser.add_argument("--device", default=None)
     parser.add_argument("--datasets", nargs="+", default=["msrvtt", "msvd", "flickr"],
                         choices=["msrvtt", "msvd", "flickr"])
@@ -323,43 +323,56 @@ def main():
     clip_model.eval()
     clip_tokenizer = open_clip.get_tokenizer("ViT-B-32")
 
-    # ── Load BERT ──
-    print("\n── Loading BERT ──")
-    lora_cfg = {"enabled": True, "r": 8, "alpha": 16, "dropout": 0.1,
-                "target_modules": ["key", "query", "value", "output.dense"]}
-    bert_model = BertEncoder(
-        model_path=str(BERT_MODEL_PATH),
-        embed_dim=512,
-        lora_cfg=lora_cfg,
-    ).to(device)
+    # ── Load BERT / MLP ──
+    if args.encoder_type == "mlp":
+        from src.models import MLPBertEncoder
+        print(f"\n── Loading MLPBertEncoder ──")
+        bert_model = MLPBertEncoder(
+            model_path=str(BERT_MODEL_PATH),
+            embed_dim=512,
+            mlp_hidden=704,
+        ).to(device)
+    else:
+        print("\n── Loading BERT ──")
+        lora_cfg = {"enabled": True, "r": 8, "alpha": 16, "dropout": 0.1,
+                    "target_modules": ["key", "query", "value", "output.dense"]}
+        bert_model = BertEncoder(
+            model_path=str(BERT_MODEL_PATH),
+            embed_dim=512,
+            lora_cfg=lora_cfg,
+        ).to(device)
     bert_model.eval()
 
     ckpt_path = args.bert_checkpoint
     print(f"  Checkpoint: {ckpt_path}")
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
-    missing, unexpected = bert_model.load_state_dict(ckpt["model_state_dict"], strict=False)
+
+    # If the checkpoint contains a full 'model_state_dict' (from Trainer.save_checkpoint), use it
+    state_dict = ckpt.get("model_state_dict", ckpt)
+    missing, unexpected = bert_model.load_state_dict(state_dict, strict=False)
     if missing:
         print(f"  Missing keys: {missing}")
     if unexpected:
         print(f"  Unexpected keys: {unexpected}")
-    print(f"  BERT params: {sum(p.numel() for p in bert_model.parameters()):,}")
+    print(f"  Model params: {sum(p.numel() for p in bert_model.parameters()):,}")
 
     # ── Run evaluations ──
+    method_name = "MLP" if args.encoder_type == "mlp" else "BERT"
     all_results = {}
 
     if "msrvtt" in args.datasets:
-        all_results["MSR-VTT"] = evaluate_msrvtt(bert_model, clip_model, clip_tokenizer, device)
+        all_results["MSR-VTT"] = evaluate_msrvtt(bert_model, clip_model, clip_tokenizer, device, method_key=method_name)
         torch.cuda.empty_cache()
     if "msvd" in args.datasets:
-        all_results["MSVD"] = evaluate_msvd(bert_model, clip_model, clip_tokenizer, device)
+        all_results["MSVD"] = evaluate_msvd(bert_model, clip_model, clip_tokenizer, device, method_key=method_name)
         torch.cuda.empty_cache()
     if "flickr" in args.datasets:
-        all_results["Flickr30k"] = evaluate_flickr30k(bert_model, clip_model, clip_tokenizer, device)
+        all_results["Flickr30k"] = evaluate_flickr30k(bert_model, clip_model, clip_tokenizer, device, method_key=method_name)
         torch.cuda.empty_cache()
 
     # ── Summary table ──
     print("\n" + "=" * 60)
-    print("  SUMMARY: CLIP text encoder vs BERT")
+    print(f"  SUMMARY: CLIP text encoder vs {method_name}")
     print("=" * 60)
     header = f"  {'Dataset':<14} {'Method':<8} {'i2t_R@1':>8} {'i2t_R@5':>8} {'i2t_R@10':>8} {'t2i_R@1':>8} {'t2i_R@5':>8} {'t2i_R@10':>8}"
     print(header)
@@ -367,7 +380,7 @@ def main():
     for ds_name, ds_results in all_results.items():
         if ds_results is None:
             continue
-        for method in ["CLIP", "BERT"]:
+        for method in ["CLIP", method_name]:
             r = ds_results.get(method, {})
             parts = [
                 f"{ds_name:<14}" if method == "CLIP" else "",

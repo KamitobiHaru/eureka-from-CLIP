@@ -90,8 +90,32 @@ def main():
 
         tokenizer = open_clip.get_tokenizer("ViT-B-32")
         collate_fn = make_clip_collate_fn(tokenizer)
+    elif encoder_type == "mlp":
+        # ── Frozen BERT + trainable MLP projection (ablation) ──
+        from src.models.mlp_encoder import MLPBertEncoder
+
+        bert_path = (
+            te_cfg.get("bert_model_path")
+            or cfg["model"].get("bert_model_path")
+        )
+        if not bert_path or not os.path.isdir(bert_path):
+            print(f"BERT model not found at {bert_path}")
+            print("Run the download script first: bash scripts/download_bert.sh")
+            sys.exit(1)
+
+        mlp_hidden = te_cfg.get("mlp_hidden", 704)
+        print(f"Loading MLPBertEncoder (mlp_hidden={mlp_hidden})...")
+        model = MLPBertEncoder(
+            model_path=bert_path,
+            embed_dim=cfg["model"]["embed_dim"],
+            mlp_hidden=mlp_hidden,
+            initial_temperature=cfg["training"]["temperature"],
+        ).to(device)
+
+        tokenizer = BertTokenizer.from_pretrained(bert_path, local_files_only=True)
+        collate_fn = make_collate_fn(tokenizer)
     else:
-        # ── BERT text encoder ────────────────────────────
+        # ── BERT text encoder (default) ─────────────────
         bert_path = (
             te_cfg.get("bert_model_path")
             or cfg["model"].get("bert_model_path")
