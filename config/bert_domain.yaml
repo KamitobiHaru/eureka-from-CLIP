@@ -4,7 +4,7 @@
 # Queue: mask_stale_texts=True → t2i gets B+Q negatives (videos never stale)
 data:
   msrvtt:
-    root: /data2/zsy/datasets/MSR-VTT
+    root: /run/media/occccce/E/MSR-VTT
     train_annotation: msrvtt_train_9k.json
     frame_cache: ./data/msrvtt/clip_keyframes
   msvd:
@@ -13,20 +13,20 @@ data:
 
 model:
   embed_dim: 512
-  bert_model_path: ./models/bert-base-uncased
+  bert_model_path: /run/media/occccce/D/models/bert-base-uncased
 
 training:
-  batch_size: 128
+  batch_size: 64
   epochs: 30
-  lr: 0.000001
+  lr: 0.000005
   t2i_weight: 0.75
-  weight_decay: 0.01
+  weight_decay: 0.005
   temperature: 0.07
   max_grad_norm: 1.0
-  warmup_steps: 3000
+  warmup_steps: 5000
   amp: true
   num_workers: 8
-  checkpoint_dir: /data2/zsy/weights/clip/bert_domain_stage1_1e-6_batch128
+  checkpoint_dir: /run/media/occccce/D/checkpoints/bert_domain_stage1_5e-6_batch64
 
 lora:
   enabled: true
@@ -41,4 +41,4 @@ queue:
   mask_stale_texts: true
 
 checkpoint:
-  bert_pretrain: /data2/zsy/weights/clip/no_uniform_seed42/ours/bert_epoch26_t2i60.5.pt
+  bert_pretrain: /run/media/occccce/D/checkpoints/bert_epoch26_t2i60.5.pt
