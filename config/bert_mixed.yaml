@@ -1,0 +1,53 @@
+# Stage 1b: Mixed COCO + MSR-VTT BERT domain adaptation.
+# COCO batches ground BERT in the original image domain (prevent forgetting).
+# MSR-VTT batches adapt BERT to the video domain language.
+# Both use frozen CLIP vision → never stale in queue.
+data:
+  coco:
+    root: ./dataset_annotation
+    annotations_dir: annotations_trainval2017/annotations
+    embedding_cache: ./data/coco/clip_embeddings
+  msrvtt:
+    root: /data2/zsy/datasets/MSR-VTT
+    train_annotation: msrvtt_train_9k.json
+    frame_cache: ./data/msrvtt/clip_keyframes
+  msvd:
+    annotation: ./data/msvd/msvd_all.json
+    frame_cache: ./data/msvd/clip_keyframes
+  flickr:
+    # Only used for evaluation, not training
+    root: ./dataset_annotation
+    annotation_file: flickr_annotations_30k.csv
+
+model:
+  embed_dim: 512
+  bert_model_path: ./models/bert-base-uncased
+
+training:
+  batch_size: 64
+  epochs: 30
+  lr: 0.000005
+  t2i_weight: 0.75
+  weight_decay: 0.01
+  temperature: 0.07
+  max_grad_norm: 1.0
+  warmup_steps: 4000
+  amp: true
+  num_workers: 8
+  coco_mix_ratio: 0.33  # ~1 COCO batch per 2 MSR-VTT batches
+  checkpoint_dir: /data2/zsy/weights/clip/bert_mixed_stage1
+
+lora:
+  enabled: true
+  r: 8
+  alpha: 16
+  dropout: 0.1
+  target_modules: ["key", "query", "value", "output.dense"]
+
+queue:
+  enabled: true
+  max_size: 49152
+  mask_stale_texts: true
+
+checkpoint:
+  bert_pretrain: /data2/zsy/weights/clip/no_uniform_seed42/ours/bert_epoch26_t2i60.5.pt

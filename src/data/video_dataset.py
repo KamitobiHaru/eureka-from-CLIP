@@ -36,9 +36,10 @@ class VideoDataset(Dataset):
         pairs: List[Tuple[str, str]] = []  # (video_id, caption)
         for entry in raw:
             vid = entry["video_id"]
-            caps = entry.get("captions") or [entry.get("caption")]
-
-            if not isinstance(caps, list):
+            caps = entry.get("captions")
+            if caps is None:
+                caps = entry.get("caption")
+            if isinstance(caps, str):
                 caps = [caps]
 
             for c in caps:

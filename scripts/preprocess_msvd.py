@@ -27,7 +27,6 @@ def main():
     # Parse lines: "video_id description"
     captions_by_video = defaultdict(list)
     with open(args.input, "r", encoding="utf-8", errors="replace") as f:
-        for line in tqdm(f, desc="Parsing MSVD"):
         for line in f:
             line = line.strip()
             if not line or line.startswith("#"):
