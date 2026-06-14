@@ -8,10 +8,13 @@ Usage:
 """
 
 import argparse
+import csv
+import json
 import os
 import sys
 from pathlib import Path
 
+import numpy as np
 import torch
 import yaml
 from tqdm import tqdm
@@ -22,6 +25,8 @@ from src.models import BertEncoder, TemporalTransformer
 from src.data import VideoDataset, video_collate_fn
 from src.training import QueueInfoNCE, ContrastiveQueue, SymmetricInfoNCE
 from src.training.evaluation import compute_recall_metrics
+
+FLICKR_ROOT = Path("./dataset_annotation")
 
 
 def _build_bert(cfg, device) -> BertEncoder:
@@ -119,7 +124,7 @@ def _build_dataloaders(cfg):
     )
     print(f"  MSVD eval:   {len(msvd_dataset):,} caption-video pairs")
 
-    return train_loader, msvd_loader
+    return train_loader, msvd_loader, tokenizer
 
 
 def _build_optimizer(bert_model, temporal, cfg):
@@ -184,6 +189,67 @@ def evaluate_msvd(bert_model, temporal, msvd_loader, cfg, device) -> dict:
     return recall
 
 
+@torch.no_grad()
+def evaluate_flickr30k(bert_model, tokenizer, device) -> dict:
+    """Evaluate on Flickr30k test (1K): BERT text vs precomputed CLIP image embeddings."""
+    bert_model.eval()
+
+    ann_file = FLICKR_ROOT / "flickr_annotations_30k.csv"
+    img_cache = Path("./data/flickr30k/clip_embeddings")
+
+    with open(ann_file) as f:
+        rows = list(csv.DictReader(f))
+
+    pairs = []
+    for r in rows:
+        if r["split"].strip() != "test":
+            continue
+        stem = Path(r["filename"].strip()).stem
+        for cap in json.loads(r["raw"]):
+            pairs.append((stem, cap))
+
+    unique_stems = list(dict.fromkeys(stem for stem, _ in pairs))
+    stem_to_img = {}
+    for stem in unique_stems:
+        npy = img_cache / f"{stem}.npy"
+        if npy.exists():
+            stem_to_img[stem] = np.load(npy)
+
+    all_image_embs = []
+    all_text_embs = []
+    all_image_ids = []
+    cap_texts = []
+
+    for stem, cap in pairs:
+        img_emb = stem_to_img.get(stem)
+        if img_emb is None:
+            continue
+        all_image_embs.append(img_emb)
+        all_image_ids.append(f"flickr_{stem}")
+        cap_texts.append(cap)
+
+        if len(cap_texts) >= 128:
+            tokens = tokenizer(cap_texts, padding=True, truncation=True,
+                               max_length=77, return_tensors="pt")
+            text_emb = bert_model(tokens["input_ids"].to(device),
+                                  tokens["attention_mask"].to(device))
+            all_text_embs.append(text_emb.cpu())
+            cap_texts = []
+
+    if cap_texts:
+        tokens = tokenizer(cap_texts, padding=True, truncation=True,
+                           max_length=77, return_tensors="pt")
+        text_emb = bert_model(tokens["input_ids"].to(device),
+                              tokens["attention_mask"].to(device))
+        all_text_embs.append(text_emb.cpu())
+
+    return compute_recall_metrics(
+        torch.from_numpy(np.stack(all_image_embs)),
+        torch.cat(all_text_embs, dim=0),
+        all_image_ids,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Joint train LoRA BERT + Temporal on MSR-VTT."
@@ -207,7 +273,7 @@ def main():
     temporal = _build_temporal(cfg, device)
 
     # ── Data ──
-    train_loader, msvd_loader = _build_dataloaders(cfg)
+    train_loader, msvd_loader, tokenizer = _build_dataloaders(cfg)
 
     # ── Queue & Loss ──
     q_cfg = cfg.get("queue", {})
@@ -244,10 +310,35 @@ def main():
     ckpt_dir = t_cfg["checkpoint_dir"]
     os.makedirs(ckpt_dir, exist_ok=True)
 
+    # ── CSV log (same format as train_bert.py) ──
+    val_csv_path = os.path.join(ckpt_dir, "val_log.csv")
+    recall_keys = ["i2t_R@1", "i2t_R@5", "i2t_R@10", "t2i_R@1", "t2i_R@5", "t2i_R@10"]
+    flickr_keys = [f"flickr_{k}" for k in recall_keys] + ["flickr_i2t_medR", "flickr_t2i_medR"]
+
+    def _write_val_csv(row_dict):
+        fieldnames = [
+            "type", "step", "epoch", "val_loss",
+            "i2t_R@1", "i2t_R@5", "i2t_R@10",
+            "t2i_R@1", "t2i_R@5", "t2i_R@10",
+            "i2t_medR", "t2i_medR",
+            "ZH_i2t_R@1", "ZH_i2t_R@5", "ZH_i2t_R@10",
+            "ZH_i2t_medR", "ZH_t2i_medR",
+            "train_monitor_loss", "queue_loss", "uniformity",
+            "i2t_loss", "t2i_loss",
+            "lr", "best_t2i_R@1",
+        ] + flickr_keys
+        write_header = not os.path.exists(val_csv_path)
+        with open(val_csv_path, "a", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=fieldnames)
+            if write_header:
+                w.writeheader()
+            w.writerow({k: v for k, v in row_dict.items() if k in fieldnames})
+
     # ── Resume ──
     start_epoch = 1
     global_step = 0
     best_msvd_t2i_r1 = -1.0
+    best_flickr_t2i_r1 = -1.0
     if args.resume:
         print(f"Resuming from: {args.resume}")
         ckpt = torch.load(args.resume, map_location=device, weights_only=True)
@@ -263,6 +354,7 @@ def main():
         start_epoch = ckpt.get("epoch", 0) + 1
         global_step = ckpt.get("global_step", 0)
         best_msvd_t2i_r1 = ckpt.get("best_msvd_t2i_r1", -1.0)
+        best_flickr_t2i_r1 = ckpt.get("best_flickr_t2i_r1", -1.0)
         print(f"  Resumed at epoch {ckpt.get('epoch', 0)}, step {global_step}")
 
     # ── Training Loop ──
@@ -277,6 +369,9 @@ def main():
         bert_model.train()
         temporal.train()
         epoch_losses = []
+        epoch_queue_losses = []
+        epoch_i2t_losses = []
+        epoch_t2i_losses = []
         pbar = tqdm(train_loader, desc=f"Epoch {epoch:02d}/{epochs}", leave=False)
 
         for batch in pbar:
@@ -352,27 +447,66 @@ def main():
 
             # Logging
             monitor_loss = loss_inbatch.item() if isinstance(loss_fn, QueueInfoNCE) else loss.item()
-            epoch_losses.append(monitor_loss if isinstance(loss_fn, QueueInfoNCE) else loss.item())
+            epoch_losses.append(monitor_loss)
+            epoch_queue_losses.append(loss.item())
+            i2t_q = getattr(loss_fn, "_last_i2t", None)
+            t2i_q = getattr(loss_fn, "_last_t2i", None)
+            if i2t_q is not None:
+                epoch_i2t_losses.append(i2t_q.item())
+                epoch_t2i_losses.append(t2i_q.item())
             postfix = {"loss": f"{monitor_loss:.4f}"}
             if isinstance(loss_fn, QueueInfoNCE):
                 postfix["q"] = f"{loss.item():.4f}"
             if queue is not None:
                 postfix["Q"] = len(queue)
-            i2t_q = getattr(loss_fn, "_last_i2t", None)
-            t2i_q = getattr(loss_fn, "_last_t2i", None)
             if i2t_q is not None:
                 postfix["i2t"] = f"{i2t_q:.4f}"
                 postfix["t2i"] = f"{t2i_q:.4f}"
             pbar.set_postfix(**postfix)
 
-        # ── Epoch-end: MSVD evaluation ──
-        print(f"  Epoch {epoch:02d}/{epochs} — evaluating on MSVD...")
+        # ── Epoch-end: MSVD + Flickr30k evaluation ──
+        print(f"  Epoch {epoch:02d}/{epochs} — evaluating...")
         msvd_results = evaluate_msvd(bert_model, temporal, msvd_loader, cfg, device)
+        torch.cuda.empty_cache()
+
+        flickr_results = evaluate_flickr30k(bert_model, tokenizer, device)
+        torch.cuda.empty_cache()
+
         avg_loss = sum(epoch_losses) / len(epoch_losses)
 
         is_best = msvd_results.get("t2i_R@1", -1.0) > best_msvd_t2i_r1
         if is_best:
             best_msvd_t2i_r1 = msvd_results["t2i_R@1"]
+        if flickr_results.get("t2i_R@1", -1.0) > best_flickr_t2i_r1:
+            best_flickr_t2i_r1 = flickr_results["t2i_R@1"]
+
+        # ── CSV log (same format as train_bert.py) ──
+        avg_queue_loss = sum(epoch_queue_losses) / len(epoch_queue_losses) if epoch_queue_losses else 0.0
+        lr_now = optimizer.param_groups[0]["lr"]
+        csv_row = {
+            "type": "epoch", "epoch": epoch, "val_loss": round(avg_loss, 4),
+            "lr": lr_now, "best_t2i_R@1": best_msvd_t2i_r1,
+            "train_monitor_loss": round(avg_loss, 4),
+            "queue_loss": round(avg_queue_loss, 4),
+        }
+        if epoch_i2t_losses:
+            csv_row["i2t_loss"] = round(float(sum(epoch_i2t_losses) / len(epoch_i2t_losses)), 4)
+            csv_row["t2i_loss"] = round(float(sum(epoch_t2i_losses) / len(epoch_t2i_losses)), 4)
+        for key in recall_keys:
+            if key in msvd_results:
+                csv_row[key] = round(float(msvd_results[key]), 2)
+        for med_key in ("i2t_medR", "t2i_medR"):
+            if med_key in msvd_results:
+                csv_row[med_key] = round(float(msvd_results[med_key]), 1)
+        for key in recall_keys:
+            fk = f"flickr_{key}"
+            if key in flickr_results:
+                csv_row[fk] = round(float(flickr_results[key]), 2)
+        for med_key in ("i2t_medR", "t2i_medR"):
+            fm = f"flickr_{med_key}"
+            if med_key in flickr_results:
+                csv_row[fm] = round(float(flickr_results[med_key]), 1)
+        _write_val_csv(csv_row)
 
         # Log
         log_parts = [
@@ -380,9 +514,13 @@ def main():
             f"Train loss: {avg_loss:.4f}",
             f"MSVD t2i_R@1: {msvd_results.get('t2i_R@1', 0):.2f}",
             f"MSVD i2t_R@1: {msvd_results.get('i2t_R@1', 0):.2f}",
+            f"Flickr t2i_R@1: {flickr_results.get('t2i_R@1', 0):.2f}",
+            f"Flickr i2t_R@1: {flickr_results.get('i2t_R@1', 0):.2f}",
         ]
         if best_msvd_t2i_r1 > 0:
-            log_parts.append(f"Best t2i_R@1: {best_msvd_t2i_r1:.2f}")
+            log_parts.append(f"Best MSVD: {best_msvd_t2i_r1:.2f}")
+        if best_flickr_t2i_r1 > 0:
+            log_parts.append(f"Best Flickr: {best_flickr_t2i_r1:.2f}")
         lr_now = optimizer.param_groups[0]["lr"]
         log_parts.append(f"LR: {lr_now:.2e}")
         temp_now = bert_model.get_temperature()
@@ -399,7 +537,9 @@ def main():
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict(),
             "msvd_results": msvd_results,
+            "flickr_results": flickr_results,
             "best_msvd_t2i_r1": best_msvd_t2i_r1,
+            "best_flickr_t2i_r1": best_flickr_t2i_r1,
         }
         if scaler:
             ckpt["scaler_state_dict"] = scaler.state_dict()

@@ -46,8 +46,8 @@ lora:
   target_modules: ["key", "query", "value", "output.dense"]
 
 queue:
-  enabled: false
-  max_size: 0
+  enabled: true
+  max_size: 49152
   mask_stale_texts: true
 
 checkpoint:
