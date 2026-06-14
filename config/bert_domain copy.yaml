@@ -16,17 +16,17 @@ model:
   bert_model_path: /run/media/occccce/D/models/bert-base-uncased
 
 training:
-  batch_size: 128
-  epochs: 30
+  batch_size: 16
+  epochs: 40
   lr: 0.00001
   t2i_weight: 0.75
-  weight_decay: 0.005
+  weight_decay: 0.003
   temperature: 0.07
   max_grad_norm: 1.0
   warmup_steps: 10000
   amp: true
   num_workers: 8
-  checkpoint_dir: /run/media/occccce/D/checkpoints/bert_domain_stage1_1e-5_batch128
+  checkpoint_dir: /run/media/occccce/D/checkpoints/bert_domain_stage1_1e-5_batch16
 
 lora:
   enabled: true
