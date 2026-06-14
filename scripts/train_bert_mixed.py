@@ -313,18 +313,6 @@ def main():
     ckpt_dir = t_cfg["checkpoint_dir"]
     os.makedirs(ckpt_dir, exist_ok=True)
 
-    # ── CSV log ──
-    csv_path = os.path.join(ckpt_dir, "metrics.csv")
-    csv_header_written = os.path.exists(csv_path)
-    csv_fields = [
-        "epoch", "global_step", "loss", "i2t_loss", "t2i_loss",
-        "msvd_t2i_R1", "msvd_t2i_R5", "msvd_t2i_R10",
-        "msvd_i2t_R1", "msvd_i2t_R5", "msvd_i2t_R10",
-        "flickr_t2i_R1", "flickr_t2i_R5", "flickr_t2i_R10",
-        "flickr_i2t_R1", "flickr_i2t_R5", "flickr_i2t_R10",
-        "lr", "temperature",
-    ]
-
     # ── Resume ──
     start_epoch = 1
     global_step = 0
@@ -348,93 +336,36 @@ def main():
         print(f"  Resumed at epoch {ckpt.get('epoch', 0)}, step {global_step}")
 
     epochs = t_cfg["epochs"]
-    mem_log_interval = 200  # print memory stats every N batches (first epoch only)
     print(f"\nTraining: {epochs} epochs, {len(train_loader):,} batches/epoch, "
           f"eval each epoch: MSVD + Flickr30k")
-    if torch.cuda.is_available():
-        torch.cuda.reset_peak_memory_stats()
     print("-" * 60)
 
     for epoch in range(start_epoch, epochs + 1):
         bert_model.train()
         epoch_losses = []
-        epoch_i2t_losses = []
-        epoch_t2i_losses = []
         pbar = tqdm(train_loader, desc=f"Epoch {epoch:02d}/{epochs}", leave=False)
 
         for batch in pbar:
-            frame_embs, padding_mask, input_ids, attention_mask, video_ids = batch
+            frame_embs, padding_mask, input_ids, attention_mask, ids = batch
             frame_embs = frame_embs.to(device)
             padding_mask = padding_mask.to(device)
             input_ids = input_ids.to(device)
             attention_mask = attention_mask.to(device)
 
-            # ── Forward ──
+            # Mean pool (MSR-VTT: pools 12 frames; COCO: single frame → identity)
             video_emb = mean_pool_video(frame_embs, padding_mask)
             text_emb = bert_model(input_ids, attention_mask)
 
-            if scaler:
-                with torch.amp.autocast("cuda"):
-                    if isinstance(loss_fn, QueueInfoNCE):
-                        loss = loss_fn(
-                            video_emb, text_emb, video_ids,
-                            logit_scale=bert_model.logit_scale,
-                        )
-                        with torch.no_grad():
-                            loss_inbatch = eval_loss_fn(
-                                video_emb, text_emb,
-                                logit_scale=bert_model.logit_scale,
-                            )
-                    else:
-                        loss = loss_fn(
-                            video_emb, text_emb,
-                            logit_scale=bert_model.logit_scale,
-                        )
-
-                scaler.scale(loss).backward()
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(bert_params, t_cfg["max_grad_norm"])
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                if isinstance(loss_fn, QueueInfoNCE):
-                    loss = loss_fn(
-                        video_emb, text_emb, video_ids,
-                        logit_scale=bert_model.logit_scale,
-                    )
-                    with torch.no_grad():
-                        loss_inbatch = eval_loss_fn(
-                            video_emb, text_emb,
-                            logit_scale=bert_model.logit_scale,
-                        )
-                else:
-                    loss = loss_fn(
-                        video_emb, text_emb,
-                        logit_scale=bert_model.logit_scale,
-                    )
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(bert_params, t_cfg["max_grad_norm"])
-                optimizer.step()
-
-            optimizer.zero_grad()
-            scheduler.step()
+            loss = _forward_loss(video_emb, text_emb, ids,
+                                 bert_model, loss_fn, eval_loss_fn, scaler)
+            _backward_step(loss, bert_params, optimizer, scheduler, scaler, t_cfg)
             global_step += 1
 
-            # Enqueue after loss (video from frozen CLIP → never stale)
-            if queue is not None and video_ids is not None:
-                queue.enqueue(video_emb, text_emb, video_ids)
+            if queue is not None and ids is not None:
+                queue.enqueue(video_emb, text_emb, ids)
 
-            # Logging
-            monitor_loss = loss_inbatch.item() if isinstance(loss_fn, QueueInfoNCE) else loss.item()
+            monitor_loss = _get_monitor_loss(loss, loss_fn)
             epoch_losses.append(monitor_loss)
-
-            # Track per-direction losses (unweighted, in-batch)
-            i2t_val = getattr(loss_fn, "_last_i2t", None)
-            t2i_val = getattr(loss_fn, "_last_t2i", None)
-            if i2t_val is not None:
-                epoch_i2t_losses.append(i2t_val.item())
-            if t2i_val is not None:
-                epoch_t2i_losses.append(t2i_val.item())
 
             postfix = {"loss": f"{monitor_loss:.3f}"}
             if queue is not None:
@@ -444,17 +375,11 @@ def main():
             if i2t_q is not None:
                 postfix["i2t"] = f"{i2t_q:.3f}"
                 postfix["t2i"] = f"{t2i_q:.3f}"
-            # Memory stats every 200 steps (first epoch only)
-            if torch.cuda.is_available() and epoch == start_epoch and global_step % mem_log_interval == 0:
-                postfix["mem"] = (f"{torch.cuda.memory_allocated()/1024**3:.1f}G/"
-                                  f"{torch.cuda.max_memory_allocated()/1024**3:.1f}G")
             pbar.set_postfix(**postfix)
 
         # ── Epoch-end: MSVD + Flickr30k evaluation ──
         print(f"  Epoch {epoch:02d}/{epochs} — evaluating...")
         avg_loss = sum(epoch_losses) / len(epoch_losses)
-        avg_i2t = sum(epoch_i2t_losses) / len(epoch_i2t_losses) if epoch_i2t_losses else 0.0
-        avg_t2i = sum(epoch_t2i_losses) / len(epoch_t2i_losses) if epoch_t2i_losses else 0.0
 
         msvd_results = evaluate_msvd(bert_model, msvd_loader, device)
         torch.cuda.empty_cache()
@@ -471,7 +396,6 @@ def main():
         log_parts = [
             f"Epoch {epoch:02d}/{epochs}",
             f"Loss: {avg_loss:.4f}",
-            f"i2t:{avg_i2t:.3f} t2i:{avg_t2i:.3f}",
             f"MSVD t2i_R@1: {msvd_results.get('t2i_R@1', 0):.2f}",
             f"MSVD i2t_R@1: {msvd_results.get('i2t_R@1', 0):.2f}",
             f"Flickr t2i_R@1: {flickr_results.get('t2i_R@1', 0):.2f}",
@@ -513,36 +437,59 @@ def main():
         print("  " + " | ".join(log_parts))
         print("-" * 60)
 
-        # ── CSV log ──
-        row = {
-            "epoch": epoch,
-            "global_step": global_step,
-            "loss": f"{avg_loss:.4f}",
-            "i2t_loss": f"{avg_i2t:.4f}",
-            "t2i_loss": f"{avg_t2i:.4f}",
-            "msvd_t2i_R1": f"{msvd_results.get('t2i_R@1', 0):.2f}",
-            "msvd_t2i_R5": f"{msvd_results.get('t2i_R@5', 0):.2f}",
-            "msvd_t2i_R10": f"{msvd_results.get('t2i_R@10', 0):.2f}",
-            "msvd_i2t_R1": f"{msvd_results.get('i2t_R@1', 0):.2f}",
-            "msvd_i2t_R5": f"{msvd_results.get('i2t_R@5', 0):.2f}",
-            "msvd_i2t_R10": f"{msvd_results.get('i2t_R@10', 0):.2f}",
-            "flickr_t2i_R1": f"{flickr_results.get('t2i_R@1', 0):.2f}",
-            "flickr_t2i_R5": f"{flickr_results.get('t2i_R@5', 0):.2f}",
-            "flickr_t2i_R10": f"{flickr_results.get('t2i_R@10', 0):.2f}",
-            "flickr_i2t_R1": f"{flickr_results.get('i2t_R@1', 0):.2f}",
-            "flickr_i2t_R5": f"{flickr_results.get('i2t_R@5', 0):.2f}",
-            "flickr_i2t_R10": f"{flickr_results.get('i2t_R@10', 0):.2f}",
-            "lr": f"{optimizer.param_groups[0]['lr']:.2e}",
-            "temperature": f"{bert_model.get_temperature():.4f}",
-        }
-        with open(csv_path, "a") as f:
-            if not csv_header_written:
-                f.write(",".join(csv_fields) + "\n")
-                csv_header_written = True
-            f.write(",".join(str(row[k]) for k in csv_fields) + "\n")
-
     print(f"Training complete. Best MSVD t2i_R@1: {best_msvd_t2i_r1:.2f}, "
           f"Best Flickr t2i_R@1: {best_flickr_t2i_r1:.2f}")
+
+
+# ── Training helpers ─────────────────────────────────────────
+
+def _forward_loss(video_emb, text_emb, video_ids, bert_model, loss_fn,
+                  eval_loss_fn, scaler):
+    if scaler:
+        with torch.amp.autocast("cuda"):
+            if isinstance(loss_fn, QueueInfoNCE):
+                loss = loss_fn(video_emb, text_emb, video_ids,
+                               logit_scale=bert_model.logit_scale)
+                with torch.no_grad():
+                    _ = eval_loss_fn(video_emb, text_emb,
+                                     logit_scale=bert_model.logit_scale)
+            else:
+                loss = loss_fn(video_emb, text_emb,
+                               logit_scale=bert_model.logit_scale)
+        return loss
+    else:
+        if isinstance(loss_fn, QueueInfoNCE):
+            loss = loss_fn(video_emb, text_emb, video_ids,
+                           logit_scale=bert_model.logit_scale)
+            with torch.no_grad():
+                _ = eval_loss_fn(video_emb, text_emb,
+                                 logit_scale=bert_model.logit_scale)
+        else:
+            loss = loss_fn(video_emb, text_emb,
+                           logit_scale=bert_model.logit_scale)
+        return loss
+
+
+def _backward_step(loss, bert_params, optimizer, scheduler, scaler, t_cfg):
+    if scaler:
+        scaler.scale(loss).backward()
+        scaler.unscale_(optimizer)
+        torch.nn.utils.clip_grad_norm_(bert_params, t_cfg["max_grad_norm"])
+        scaler.step(optimizer)
+        scaler.update()
+    else:
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(bert_params, t_cfg["max_grad_norm"])
+        optimizer.step()
+
+    optimizer.zero_grad()
+    scheduler.step()
+
+
+def _get_monitor_loss(loss, loss_fn):
+    if isinstance(loss_fn, QueueInfoNCE):
+        return getattr(loss_fn, "_last_i2t", loss.item())
+    return loss.item()
 
 
 if __name__ == "__main__":
