@@ -6,9 +6,9 @@ import torch
 class ContrastiveQueue:
     """GPU-resident FIFO queue of (image_emb, text_emb, image_id) entries.
 
-    Uses a pre-allocated circular buffer on GPU, avoiding PCIe transfers
-    and Python list overhead on every enqueue/get.  Enqueue is O(B) zero-copy
-    writes into a pre-allocated tensor.
+    Maintains a **contiguous** buffer — ``get()`` returns slices directly
+    (zero-copy), avoiding the ``torch.cat`` overhead that the old circular
+    buffer required on every forward pass.
 
     Enqueue happens AFTER loss computation to prevent current-batch
     items from acting as their own negatives.
@@ -21,15 +21,9 @@ class ContrastiveQueue:
         self.reset()
 
     def reset(self) -> None:
-        self.ptr = 0  # next write position
-        self.size = 0  # number of valid entries
-        self.image_embs = torch.empty(
-            self.max_size, self.embed_dim, device=self.device
-        )
-        self.text_embs = torch.empty(
-            self.max_size, self.embed_dim, device=self.device
-        )
-        self.image_ids: List[str] = [""] * self.max_size
+        self.image_embs = torch.empty(0, self.embed_dim, device=self.device)
+        self.text_embs = torch.empty(0, self.embed_dim, device=self.device)
+        self.image_ids: List[str] = []
 
     def enqueue(
         self,
@@ -37,76 +31,43 @@ class ContrastiveQueue:
         text_emb: torch.Tensor,
         image_ids: List[str],
     ) -> None:
-        """Add B entries to the GPU-resident circular buffer. O(B)."""
+        """Append B entries. Trim oldest when over ``max_size``."""
         B = image_emb.size(0)
-        end = self.ptr + B
+        self.image_embs = torch.cat([self.image_embs, image_emb.detach()])
+        self.text_embs = torch.cat([self.text_embs, text_emb.detach()])
+        self.image_ids.extend(image_ids)
 
-        if end <= self.max_size:
-            # No wrap — single contiguous write
-            self.image_embs[self.ptr : end] = image_emb.detach()
-            self.text_embs[self.ptr : end] = text_emb.detach()
-            for k in range(B):
-                self.image_ids[self.ptr + k] = image_ids[k]
-        else:
-            # Wrap around the end of the buffer
-            first = self.max_size - self.ptr
-            self.image_embs[self.ptr :] = image_emb.detach()[:first]
-            self.text_embs[self.ptr :] = text_emb.detach()[:first]
-            self.image_embs[: end - self.max_size] = image_emb.detach()[first:]
-            self.text_embs[: end - self.max_size] = text_emb.detach()[first:]
-            for k in range(first):
-                self.image_ids[self.ptr + k] = image_ids[k]
-            for k in range(end - self.max_size):
-                self.image_ids[k] = image_ids[first + k]
-
-        self.ptr = end % self.max_size
-        self.size = min(self.size + B, self.max_size)
+        excess = len(self.image_embs) - self.max_size
+        if excess > 0:
+            # Clone so the old storage is freed (a slice would be a view)
+            self.image_embs = self.image_embs[excess:].clone()
+            self.text_embs = self.text_embs[excess:].clone()
+            self.image_ids = self.image_ids[excess:]
 
     def get(
         self, device: Optional[torch.device] = None
     ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[List[str]]]:
         """Return (image_embs, text_embs, image_ids) for the full queue.
 
-        The ``device`` argument is accepted for backward compatibility
-        (the data is already on the correct GPU).
+        The returned tensors are views (zero-copy). The ``device`` argument
+        is accepted for backward compatibility (data is already on GPU).
         """
-        if self.size == 0:
+        N = len(self.image_embs)
+        if N == 0:
             return None, None, None
-
-        if self.size < self.max_size:
-            # Not yet full — [0 .. size) are valid
-            return (
-                self.image_embs[: self.size],
-                self.text_embs[: self.size],
-                self.image_ids[: self.size],
-            )
-
-        # Full circular buffer — linearise so [0] = oldest
-        imgs = torch.cat(
-            [self.image_embs[self.ptr :], self.image_embs[: self.ptr]]
-        )
-        txts = torch.cat(
-            [self.text_embs[self.ptr :], self.text_embs[: self.ptr]]
-        )
-        ids = self.image_ids[self.ptr :] + self.image_ids[: self.ptr]
-        return imgs, txts, ids
+        return self.image_embs[:N], self.text_embs[:N], self.image_ids[:N]
 
     def __len__(self) -> int:
-        return self.size
+        return len(self.image_embs)
 
     def state_dict(self) -> Optional[dict]:
-        """Serializable state for checkpointing. Returns None when empty.
-
-        Tensors are moved to CPU for serialisation (torch.save handles this
-        transparently).
-        """
-        if self.size == 0:
+        """Serializable state for checkpointing. Returns None when empty."""
+        if len(self.image_embs) == 0:
             return None
-        imgs, txts, ids = self.get(None)
         return {
-            "image_embs": imgs.cpu(),
-            "text_embs": txts.cpu(),
-            "image_ids": ids,
+            "image_embs": self.image_embs.cpu(),
+            "text_embs": self.text_embs.cpu(),
+            "image_ids": self.image_ids,
         }
 
     def load_state_dict(self, state: Optional[dict]) -> None:
@@ -118,19 +79,13 @@ class ContrastiveQueue:
         imgs = state["image_embs"].to(self.device)
         txts = state["text_embs"].to(self.device)
         ids: list = list(state["image_ids"])
-        N = len(ids)
 
-        self.size = min(N, self.max_size)
-        self.ptr = self.size % self.max_size
-
-        if N > self.max_size:
-            # Truncate oldest excess entries
-            excess = N - self.max_size
+        if len(ids) > self.max_size:
+            excess = len(ids) - self.max_size
             imgs = imgs[excess:]
             txts = txts[excess:]
             ids = ids[excess:]
 
-        self.image_embs[: len(imgs)] = imgs
-        self.text_embs[: len(txts)] = txts
-        for i in range(len(ids)):
-            self.image_ids[i] = ids[i]
+        self.image_embs = imgs
+        self.text_embs = txts
+        self.image_ids = ids

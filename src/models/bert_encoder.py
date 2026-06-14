@@ -80,6 +80,7 @@ class BertEncoder(nn.Module):
             task_type=TaskType.FEATURE_EXTRACTION,
         )
         self.bert = get_peft_model(self.bert, lora_config)
+        self.bert.gradient_checkpointing_enable()
         self._peft_config = lora_config  # keep a reference for checkpoint metadata
 
     # ── Forward ──────────────────────────────────────────────────────────────────

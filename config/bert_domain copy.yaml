@@ -18,7 +18,7 @@ model:
 training:
   batch_size: 128
   epochs: 30
-  lr: 0.000001
+  lr: 0.000003
   t2i_weight: 0.75
   weight_decay: 0.01
   temperature: 0.07
@@ -26,7 +26,7 @@ training:
   warmup_steps: 3000
   amp: true
   num_workers: 8
-  checkpoint_dir: /data2/zsy/weights/clip/bert_domain_stage1_1e-6_batch128
+  checkpoint_dir: /data2/zsy/weights/clip/bert_domain_stage1_3e-6_batch128
 
 lora:
   enabled: true

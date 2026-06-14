@@ -298,10 +298,10 @@ def main():
             # ── Forward ──
             # Mean pool frozen CLIP video embeddings (no temporal)
             video_emb = mean_pool_video(frame_embs, padding_mask)
-            text_emb = bert_model(input_ids, attention_mask)
 
             if scaler:
                 with torch.amp.autocast("cuda"):
+                    text_emb = bert_model(input_ids, attention_mask)
                     if isinstance(loss_fn, QueueInfoNCE):
                         loss = loss_fn(
                             video_emb, text_emb, video_ids,

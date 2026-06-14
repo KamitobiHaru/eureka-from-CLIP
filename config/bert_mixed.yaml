@@ -27,7 +27,7 @@ model:
   bert_model_path: ./models/bert-base-uncased
 
 training:
-  batch_size: 32
+  batch_size: 128
   epochs: 30
   lr: 0.0003
   t2i_weight: 0.75

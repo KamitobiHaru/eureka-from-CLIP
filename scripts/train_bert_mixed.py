@@ -313,6 +313,30 @@ def main():
     ckpt_dir = t_cfg["checkpoint_dir"]
     os.makedirs(ckpt_dir, exist_ok=True)
 
+    # ── CSV log (same format as train_bert.py) ──
+    val_csv_path = os.path.join(ckpt_dir, "val_log.csv")
+    recall_keys = ["i2t_R@1", "i2t_R@5", "i2t_R@10", "t2i_R@1", "t2i_R@5", "t2i_R@10"]
+    flickr_keys = [f"flickr_{k}" for k in recall_keys] + ["flickr_i2t_medR", "flickr_t2i_medR"]
+
+    def _write_val_csv(row_dict):
+        fieldnames = [
+            "type", "step", "epoch", "val_loss",
+            "i2t_R@1", "i2t_R@5", "i2t_R@10",
+            "t2i_R@1", "t2i_R@5", "t2i_R@10",
+            "i2t_medR", "t2i_medR",
+            "ZH_i2t_R@1", "ZH_i2t_R@5", "ZH_i2t_R@10",
+            "ZH_i2t_medR", "ZH_t2i_medR",
+            "train_monitor_loss", "queue_loss", "uniformity",
+            "i2t_loss", "t2i_loss",
+            "lr", "best_t2i_R@1",
+        ] + flickr_keys
+        write_header = not os.path.exists(val_csv_path)
+        with open(val_csv_path, "a", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=fieldnames)
+            if write_header:
+                w.writeheader()
+            w.writerow({k: v for k, v in row_dict.items() if k in fieldnames})
+
     # ── Resume ──
     start_epoch = 1
     global_step = 0
@@ -343,6 +367,9 @@ def main():
     for epoch in range(start_epoch, epochs + 1):
         bert_model.train()
         epoch_losses = []
+        epoch_queue_losses = []
+        epoch_i2t_losses = []
+        epoch_t2i_losses = []
         pbar = tqdm(train_loader, desc=f"Epoch {epoch:02d}/{epochs}", leave=False)
 
         for batch in pbar:
@@ -354,10 +381,16 @@ def main():
 
             # Mean pool (MSR-VTT: pools 12 frames; COCO: single frame → identity)
             video_emb = mean_pool_video(frame_embs, padding_mask)
-            text_emb = bert_model(input_ids, attention_mask)
 
-            loss = _forward_loss(video_emb, text_emb, ids,
-                                 bert_model, loss_fn, eval_loss_fn, scaler)
+            if scaler:
+                with torch.amp.autocast("cuda"):
+                    text_emb = bert_model(input_ids, attention_mask)
+                    loss = _forward_loss(video_emb, text_emb, ids,
+                                        bert_model, loss_fn, eval_loss_fn, scaler)
+            else:
+                text_emb = bert_model(input_ids, attention_mask)
+                loss = _forward_loss(video_emb, text_emb, ids,
+                                     bert_model, loss_fn, eval_loss_fn, scaler)
             _backward_step(loss, bert_params, optimizer, scheduler, scaler, t_cfg)
             global_step += 1
 
@@ -366,6 +399,12 @@ def main():
 
             monitor_loss = _get_monitor_loss(loss, loss_fn)
             epoch_losses.append(monitor_loss)
+            epoch_queue_losses.append(loss.item())
+            i2t_q = getattr(loss_fn, "_last_i2t", None)
+            t2i_q = getattr(loss_fn, "_last_t2i", None)
+            if i2t_q is not None:
+                epoch_i2t_losses.append(i2t_q.item())
+                epoch_t2i_losses.append(t2i_q.item())
 
             postfix = {"loss": f"{monitor_loss:.3f}"}
             if queue is not None:
@@ -392,6 +431,34 @@ def main():
             best_msvd_t2i_r1 = msvd_results["t2i_R@1"]
         if flickr_results.get("t2i_R@1", -1.0) > best_flickr_t2i_r1:
             best_flickr_t2i_r1 = flickr_results["t2i_R@1"]
+
+        # ── CSV log (same format as train_bert.py) ──
+        avg_queue_loss = sum(epoch_queue_losses) / len(epoch_queue_losses) if epoch_queue_losses else 0.0
+        lr_now = optimizer.param_groups[0]["lr"]
+        csv_row = {
+            "type": "epoch", "epoch": epoch, "val_loss": round(avg_loss, 4),
+            "lr": lr_now, "best_t2i_R@1": best_msvd_t2i_r1,
+            "train_monitor_loss": round(avg_loss, 4),
+            "queue_loss": round(avg_queue_loss, 4),
+        }
+        if epoch_i2t_losses:
+            csv_row["i2t_loss"] = round(float(sum(epoch_i2t_losses) / len(epoch_i2t_losses)), 4)
+            csv_row["t2i_loss"] = round(float(sum(epoch_t2i_losses) / len(epoch_t2i_losses)), 4)
+        for key in recall_keys:
+            if key in msvd_results:
+                csv_row[key] = round(float(msvd_results[key]), 2)
+        for med_key in ("i2t_medR", "t2i_medR"):
+            if med_key in msvd_results:
+                csv_row[med_key] = round(float(msvd_results[med_key]), 1)
+        for key in recall_keys:
+            fk = f"flickr_{key}"
+            if key in flickr_results:
+                csv_row[fk] = round(float(flickr_results[key]), 2)
+        for med_key in ("i2t_medR", "t2i_medR"):
+            fm = f"flickr_{med_key}"
+            if med_key in flickr_results:
+                csv_row[fm] = round(float(flickr_results[med_key]), 1)
+        _write_val_csv(csv_row)
 
         log_parts = [
             f"Epoch {epoch:02d}/{epochs}",
