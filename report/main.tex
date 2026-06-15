@@ -77,6 +77,14 @@ CLIP \citep{radford2021clip} introduced a large-scale contrastive learning parad
 
 \subsection{Replacing CLIP's Text Encoder}
 
+LiT \citep{zhai2022lit} (Locked-image Tuning) is the most closely related predecessor to our work.
+LiT freezes a pre-trained image model and trains only the text tower to align with it via contrastive learning, demonstrating that locking the image encoder consistently outperforms fine-tuning it, even on large-scale data.
+The core insight---that the image encoder is already a strong feature extractor and the bottleneck is teaching the text model to ``read out'' these representations---directly motivates our decision to freeze CLIP's vision encoder.
+However, LiT treats the text tower as fully trainable (regardless of random or pre-trained initialization) and finds that text pre-training provides only marginal benefit \citep[Fig.~3]{zhai2022lit}.
+Our work explores a complementary point in this design space: we freeze BERT entirely and instead inject a small number of trainable parameters via low-rank adapters (LoRA) or a compact MLP projection head.
+Under this constrained setup---only $\sim$1.4M trainable parameters compared to BERT's 110M and LiT's full text encoder---we show that a frozen pre-trained text encoder can still be effectively adapted to CLIP's embedding space, producing a competitive zero-shot retrieval model with minimal training overhead.
+This suggests that the value of pre-trained text knowledge is more accessible via lightweight adaptation than LiT's full fine-tuning setup would indicate.
+
 AltCLIP \citep{chen2022altclip} replaces CLIP's text encoder with XLM-R \citep{conneau2020xlmr} for multilingual capabilities, using a two-stage training process of teacher distillation followed by contrastive learning. Chinese CLIP \citep{yang2022chinese} builds a Chinese-specific vision-language model from scratch with a two-stage training strategy. Our work differs from these approaches in that we focus on a lightweight adaptation of BERT \citep{devlin2019bert} to match CLIP's existing embedding space, requiring only a fraction of the training data and compute.
 
 \subsection{Parameter-Efficient Fine-Tuning}
@@ -248,6 +256,8 @@ Table~\ref{tab:ablation} summarizes ablation experiments. Removing the text-stal
 
 Table~\ref{tab:alpha} examines the effect of the loss weight $\alpha$. Increasing $\alpha$ from 0.25 to 0.75 yields only a modest +1.20 t2i R@1 gain (from 59.28 to 60.48), with a corresponding shift from i2t toward t2i. The $\alpha{=}0.50$ configuration achieves 60.26 t2i R@1, only 0.22 points below the full $\alpha{=}0.75$ setting, indicating that the asymmetric loss weight contributes relatively little compared to the queue design.
 
+Together with the parameter-placement ablation in Table~\ref{tab:ablation_mlp}, these results establish a broader hierarchy: \emph{how} the limited trainable capacity is distributed across BERT layers (LoRA vs.\ MLP, Table~\ref{tab:ablation_mlp}) and \emph{how} the contrastive queue is designed (Table~\ref{tab:ablation}) both dominate over explicit loss reweighting (Table~\ref{tab:alpha}) in determining final retrieval performance.
+
 \subsection{Ablation: Parameter Distribution (LoRA vs.\ MLP Projection)}
 
 To isolate whether the performance gains of LoRA stem from additional trainable capacity or from its layer-wise distribution within BERT, we replace all LoRA adapters with a three-layer MLP projection head ($768 \to 704 \to 704 \to 512$) that has a comparable number of trainable parameters (${\sim}$1.40M versus ${\sim}$1.35M in the LoRA configuration). The MLP is inserted after BERT's [CLS] pooling, replacing both the original linear projection head and the LoRA adapters. All other hyperparameters remain identical.
@@ -381,6 +391,11 @@ T.-Y.~Lin, M.~Maire, S.~Belongie, J.~Hays, P.~Perona, D.~Ramanan, P.~Dollár, an
 A.~Conneau, K.~Khandelwal, N.~Goyal, V.~Chaudhary, G.~Wenzek, F.~Guzmán, E.~Grave, M.~Ott, L.~Zettlemoyer, and V.~Stoyanov.
 \newblock Unsupervised cross-lingual representation learning at scale.
 \newblock In \textit{ACL}, 2020.
+
+\bibitem[Zhai et al.(2022)Zhai, Wang, Mustafa, Steiner, Keysers, Kolesnikov, and Beyer]{zhai2022lit}
+X.~Zhai, X.~Wang, B.~Mustafa, A.~Steiner, D.~Keysers, A.~Kolesnikov, and L.~Beyer.
+\newblock LiT: Zero-shot transfer with locked-image text tuning.
+\newblock In \textit{CVPR}, 2022.
 
 \bibitem[Zhai et al.(2023)Zhai, Mustafa, Kolesnikov, and Beyer]{zhai2023sigmoid}
 X.~Zhai, B.~Mustafa, A.~Kolesnikov, and L.~Beyer.
