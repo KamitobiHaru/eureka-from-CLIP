@@ -1,0 +1,41 @@
+{
+  "dataset": "VRIPT",
+  "num_clips": 8776,
+  "truncation": "fair",
+  "elapsed_seconds": 73.29339623451233,
+  "results": {
+    "CLIP": {
+      "i2t_R@1": 21.444849589790337,
+      "t2i_R@1": 25.319051959890608,
+      "i2t_R@5": 45.886508659981764,
+      "t2i_R@5": 54.78577939835916,
+      "i2t_R@10": 56.34685505925251,
+      "t2i_R@10": 65.1207839562443
+    },
+    "NoStack": {
+      "i2t_R@1": 18.881039197812218,
+      "t2i_R@1": 19.382406563354603,
+      "i2t_R@5": 43.63035551504102,
+      "t2i_R@5": 44.0975387420237,
+      "i2t_R@10": 55.127620783956246,
+      "t2i_R@10": 55.104831358249776
+    },
+    "Stack": {
+      "i2t_R@1": 19.496353691886963,
+      "t2i_R@1": 17.741567912488605,
+      "i2t_R@5": 44.96353691886964,
+      "t2i_R@5": 42.0464904284412,
+      "i2t_R@10": 56.438012762078394,
+      "t2i_R@10": 52.541020966271645
+    }
+  },
+  "config": {
+    "mode": [
+      "clip",
+      "nostack",
+      "stack"
+    ],
+    "nostack_checkpoint": "/run/media/occccce/D/checkpoints/bert_domain_1e-5_batch128/bert_domain_best_e28_msvd17.5.pt",
+    "stack_checkpoint": "/run/media/occccce/D/checkpoints/bert_domain_stack_lora_1e-5_batch128/bert_domain_best_e25_msvd17.9.pt"
+  }
+}
