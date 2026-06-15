@@ -248,6 +248,28 @@ Table~\ref{tab:ablation} summarizes ablation experiments. Removing the text-stal
 
 Table~\ref{tab:alpha} examines the effect of the loss weight $\alpha$. Increasing $\alpha$ from 0.25 to 0.75 yields only a modest +1.20 t2i R@1 gain (from 59.28 to 60.48), with a corresponding shift from i2t toward t2i. The $\alpha{=}0.50$ configuration achieves 60.26 t2i R@1, only 0.22 points below the full $\alpha{=}0.75$ setting, indicating that the asymmetric loss weight contributes relatively little compared to the queue design.
 
+\subsection{Ablation: Parameter Distribution (LoRA vs.\ MLP Projection)}
+
+To isolate whether the performance gains of LoRA stem from additional trainable capacity or from its layer-wise distribution within BERT, we replace all LoRA adapters with a three-layer MLP projection head ($768 \to 704 \to 704 \to 512$) that has a comparable number of trainable parameters (${\sim}$1.40M versus ${\sim}$1.35M in the LoRA configuration). The MLP is inserted after BERT's [CLS] pooling, replacing both the original linear projection head and the LoRA adapters. All other hyperparameters remain identical.
+
+Table~\ref{tab:ablation_mlp} reports the results. The MLP projection achieves only 39.92\% t2i R@1 and 51.3\% i2t R@1, substantially below the LoRA configuration (60.48\% / 74.60\%) and even below the ``w/o queue'' ablation (55.06\% / 72.10\%). This 20+ point drop in t2i R@1 demonstrates that the architectural placement of trainable parameters is far more important than their raw count. LoRA's effectiveness lies in its ability to adapt BERT's internal representations across all 12 Transformer layers, whereas the MLP concentrates all trainable capacity in a single post-hoc projection that cannot compensate for the frozen BERT backbone's misalignment with CLIP's embedding space.
+
+Interestingly, the MLP configuration also exhibits a plateau in validation loss after the early epochs (val\_loss reaches a minimum of 2.44 at epoch 5 and then gradually increases), suggesting that the post-hoc projection quickly exhausts its representational capacity. In contrast, the LoRA configuration continues to improve throughout the 30-epoch training schedule.
+
+\begin{table}[h]
+\centering
+\caption{Ablation: LoRA vs.\ MLP projection with comparable parameter counts. Both models are trained on COCO and evaluated zero-shot on Flickr30k.}
+\label{tab:ablation_mlp}
+\begin{tabular}{lcccccc}
+\toprule
+Method & t2i R@1 & t2i R@5 & t2i R@10 & i2t R@1 & i2t R@5 & i2t R@10 \\
+\midrule
+LoRA (Ours) & 60.48 & 84.96 & 91.00 & 74.60 & 92.90 & 96.60 \\
+MLP projection & 39.92 & 68.88 & 78.68 & 51.30 & 81.00 & 89.20 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \section{Discussion}
 
 \subsection{Queue Asymmetry Dominates Retrieval Optimization}
