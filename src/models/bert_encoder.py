@@ -93,24 +93,31 @@ class BertEncoder(nn.Module):
 
         1. Loads checkpoint weights into the ``"default"`` adapter, projection
            head, and logit scale.
-        2. Freezes the ``"default"`` LoRA weights.
-        3. Adds a new ``"stack"`` LoRA adapter with a smaller rank (e.g. r=2).
-        4. Enables both adapters in the forward pass.
+        2. Merges the ``"default"`` LoRA adapter into the base BERT weights
+           via ``merge_and_unload``, so the base LoRA's knowledge is baked
+           into the model and doesn't need to stay as a separate adapter.
+        3. Adds a **single** new LoRA adapter (the "stack") with a smaller
+           rank (e.g. r=2) on top of the merged weights.
+        4. Only the stack LoRA + projection head remain trainable.
+
+        This avoids depending on PEFT's multi-adapter forward API, which
+        changed across PEFT versions (``active_adapter`` no longer accepts
+        a list in PEFT >= 0.13).
         """
         try:
-            from peft import LoraConfig, TaskType
+            from peft import LoraConfig, TaskType, get_peft_model
         except ImportError:
             raise ImportError("LoRA stacking requires `peft`.\n  pip install peft>=0.12.0")
 
         ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
         self.load_state_dict(ckpt["model_state_dict"], strict=False)
 
-        # Freeze the "default" (base) LoRA adapter
-        for name, param in self.bert.named_parameters():
-            if "lora" in name and "default" in name:
-                param.requires_grad_(False)
+        # ── Step 1: Merge "default" LoRA into BERT weights ──
+        self.bert = self.bert.merge_and_unload()
+        # Now self.bert is a plain BertModel (no PEFT wrapper) with
+        # the base LoRA's contribution baked into the weights.
 
-        # Add the "stack" LoRA adapter
+        # ── Step 2: Re-wrap with only the stack LoRA ──
         stack_config = LoraConfig(
             r=stack_lora_cfg["r"],
             lora_alpha=stack_lora_cfg["alpha"],
@@ -119,8 +126,9 @@ class BertEncoder(nn.Module):
             bias="none",
             task_type=TaskType.FEATURE_EXTRACTION,
         )
-        self.bert.add_adapter("stack", stack_config)
-        self.bert.active_adapter = ["default", "stack"]
+        self.bert = get_peft_model(self.bert, stack_config)
+        self.bert.gradient_checkpointing_enable()
+        self._peft_config = stack_config
 
         self._stack_lora_config = stack_lora_cfg
 
