@@ -25,6 +25,8 @@ training:
   max_grad_norm: 1.0
   warmup_steps: 10000
   amp: true
+  step_level_val: true
+  eval_batch: 2000
   num_workers: 8
   checkpoint_dir: /run/media/occccce/D/checkpoints/bert_domain_stage1_1e-5_batch16
 

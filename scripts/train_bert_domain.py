@@ -280,7 +280,11 @@ def main():
 
     # ── Training Loop ──
     epochs = t_cfg["epochs"]
+    step_level_val = t_cfg.get("step_level_val", False)
+    eval_batch = t_cfg.get("eval_batch", 5000)
     print(f"\nTraining: {epochs} epochs, eval each epoch: MSVD + Flickr30k")
+    if step_level_val:
+        print(f"  Batch-level eval every {eval_batch} steps (MSVD only)")
     print("-" * 60)
 
     for epoch in range(start_epoch, epochs + 1):
@@ -363,6 +367,53 @@ def main():
                 postfix["i2t"] = f"{i2t_q:.4f}"
                 postfix["t2i"] = f"{t2i_q:.4f}"
             pbar.set_postfix(**postfix)
+
+            # ── Step-level validation ─────────────────────────
+            if step_level_val and global_step % eval_batch == 0:
+                print(f"\n  Step {global_step}: batch-level eval on MSVD...")
+                step_msvd = evaluate_msvd(bert_model, msvd_loader, device)
+                torch.cuda.empty_cache()
+
+                step_is_best = step_msvd.get("t2i_R@1", -1.0) > best_msvd_t2i_r1
+                if step_is_best:
+                    best_msvd_t2i_r1 = step_msvd["t2i_R@1"]
+
+                log_parts = [
+                    f"Step {global_step} (Epoch {epoch})",
+                    f"MSVD t2i_R@1: {step_msvd.get('t2i_R@1', 0):.2f}",
+                    f"MSVD i2t_R@1: {step_msvd.get('i2t_R@1', 0):.2f}",
+                ]
+                if best_msvd_t2i_r1 > 0:
+                    log_parts.append(f"Best(MSVD):{best_msvd_t2i_r1:.2f}")
+                lr_now = optimizer.param_groups[0]["lr"]
+                log_parts.append(f"LR:{lr_now:.2e}")
+
+                if step_is_best:
+                    ckpt = {
+                        "epoch": epoch,
+                        "global_step": global_step,
+                        "model_state_dict": bert_model.state_dict(),
+                        "optimizer_state_dict": optimizer.state_dict(),
+                        "scheduler_state_dict": scheduler.state_dict(),
+                        "msvd_results": step_msvd,
+                        "flickr_results": {},
+                        "best_msvd_t2i_r1": best_msvd_t2i_r1,
+                        "best_flickr_t2i_r1": best_flickr_t2i_r1,
+                    }
+                    if scaler:
+                        ckpt["scaler_state_dict"] = scaler.state_dict()
+                    if queue is not None:
+                        qstate = queue.state_dict()
+                        if qstate is not None:
+                            ckpt["queue_state"] = qstate
+
+                    save_name = f"bert_domain_step{global_step}_msvd{step_msvd.get('t2i_R@1', 0):.1f}.pt"
+                    torch.save(ckpt, os.path.join(ckpt_dir, save_name))
+                    log_parts.append(f"★ → {save_name}")
+
+                print("  " + " | ".join(log_parts))
+                print("-" * 60)
+                bert_model.train()
 
         # ── Epoch-end: MSVD + Flickr30k evaluation ──
         print(f"  Epoch {epoch:02d}/{epochs} — evaluating...")
