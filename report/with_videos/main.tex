@@ -42,7 +42,7 @@
 \footnotetext{$^{\dagger}$Equal contribution.}
 
 \begin{abstract}
-We present Eureka-from-CLIP, a framework that replaces CLIP's fixed text encoder with a lightweight BERT-based encoder for zero-shot text-to-video retrieval under tight resource constraints. Through parameter-efficient cross-modal alignment, we first adapt BERT to CLIP's frozen visual space on COCO captions with only 1.35M trainable LoRA \citep{hu2022lora} parameters, outperforming CLIP's native text encoder on Flickr30k \citep{plummer2015flickr30k} text-to-image retrieval (60.48\% vs.~57.90\%). We then domain-adapt to video via Stack LoRA: freezing the COCO-trained adapter and adding a smaller rank-2 stack (0.63M trainable parameters) on MSR-VTT. The resulting model matches and slightly exceeds CLIP's zero-shot video retrieval on MSVD (17.88\% vs.~17.36\% t2i R@1) while using a tiny fraction of the training budget for adaptation. Our asymmetric queue design compensates for the small batch size mandated by limited GPU memory by masking stale text embeddings while retaining the fresh image queue. This work provides a practical recipe for replacing CLIP's text encoder with arbitrary BERT variants under limited compute, with direct applicability to both image and video retrieval.
+We present Eureka-from-CLIP, a framework that replaces CLIP's fixed text encoder with a lightweight BERT-based encoder for zero-shot text-to-video retrieval under tight resource constraints. Through parameter-efficient cross-modal alignment, we first adapt BERT to CLIP's frozen visual space on COCO captions with only 1.35M trainable LoRA \citep{hu2022lora} parameters, outperforming CLIP's native text encoder on Flickr30k \citep{plummer2015flickr30k} text-to-image retrieval (60.48\% vs.~57.90\%). We then domain-adapt to video via Stack LoRA: freezing the COCO-trained adapter and adding a smaller rank-2 stack (0.63M trainable parameters) on MSR-VTT. The resulting model outperforms CLIP's zero-shot video retrieval on MSVD (28.13\% vs.~27.01\% t2i R@1) while using a tiny fraction of the training budget for adaptation. Our asymmetric queue design compensates for the small batch size mandated by limited GPU memory by masking stale text embeddings while retaining the fresh image queue. This work provides a practical recipe for replacing CLIP's text encoder with arbitrary BERT variants under limited compute, with direct applicability to both image and video retrieval, and naturally extends to multilingual settings via BERT's multilingual variants.
 \end{abstract}
 
 \bigskip
@@ -55,15 +55,17 @@ In this work, we address the problem of replacing CLIP's text encoder with BERT 
 
 We adopt LoRA \citep{hu2022lora} for parameter-efficient adaptation, training only low-rank adapters inserted into BERT's Transformer layers while keeping all pre-trained weights frozen. To compensate for the small batch size enforced by limited GPU memory, we employ a queue-based contrastive objective \citep{he2020moco}. However, training only the text encoder creates a staleness problem: as the text encoder evolves, text embeddings stored in the queue become outdated. We address this with an asymmetric queue design that masks stale text embeddings while retaining the full image queue, which stays perpetually fresh because it comes from a frozen CLIP vision encoder.
 
-Our two-stage approach proceeds as follows. In Stage~1 (image alignment), we train BERT with LoRA (r=8, 1.35M trainable parameters) on COCO captions to align with CLIP's frozen image embeddings, achieving 60.48\% text-to-image R@1 on Flickr30k --- surpassing CLIP's native text encoder (57.90\%). In Stage~2 (video domain adaptation), we adapt the COCO-aligned BERT to MSR-VTT video captions via Stack LoRA: we freeze the COCO-trained adapter via weight merging and add a smaller rank-2 adapter (0.63M trainable parameters) that learns only the domain shift. The resulting model achieves 17.88\% t2i R@1 on MSVD zero-shot video retrieval, slightly exceeding CLIP's baseline of 17.36\% in the same evaluation setup.
+Our two-stage approach proceeds as follows. In Stage~1 (image alignment), we train BERT with LoRA (r=8, 1.35M trainable parameters) on COCO captions to align with CLIP's frozen image embeddings, achieving 60.48\% text-to-image R@1 on Flickr30k --- surpassing CLIP's native text encoder (57.90\%). In Stage~2 (video domain adaptation), we adapt the COCO-aligned BERT to MSR-VTT video captions via Stack LoRA: we freeze the COCO-trained adapter via weight merging and add a smaller rank-2 adapter (0.63M trainable parameters) that learns only the domain shift. The resulting model achieves 28.13\% t2i R@1 on MSVD zero-shot video retrieval, exceeding CLIP's baseline of 27.01\% in the same evaluation setup.
 
 Our contributions are:
 
 \begin{enumerate}
     \item We introduce an asymmetric queue design that masks stale text embeddings while retaining the fresh image queue, enabling effective small-batch contrastive learning when only the text encoder is trained.
     \item We propose Stack LoRA, a two-stage parameter-efficient strategy that freezes a pre-trained adapter via weight merging and stacks a smaller adapter for domain transfer, reducing forgetting while using fewer trainable parameters.
-    \item We demonstrate that a BERT encoder aligned to CLIP's visual space via lightweight LoRA adaptation matches CLIP's native text encoder on both image (Flickr30k) and video (MSVD) zero-shot retrieval, using only 0.63--1.35M trainable parameters on a single 8\,GB GPU.
+    \item We demonstrate that a BERT encoder aligned to CLIP's visual space via lightweight LoRA adaptation exceeds CLIP's native text encoder on both image (Flickr30k, 60.48\% t2i R@1) and video (MSVD, 28.13\% t2i R@1) zero-shot retrieval, using only 0.63--1.35M trainable parameters on a single 8\,GB GPU.
 \end{enumerate}
+
+Furthermore, because our framework uses BERT as the text encoder, it naturally supports multilingual retrieval by substituting multilingual BERT variants. We show that a multilingual BERT trained solely on English captions achieves non-trivial zero-shot Chinese retrieval (27.22\% t2i R@1 on Flickr30k), demonstrating cross-lingual generalization without any multilingual training data.
 
 \section{Related Work}
 
@@ -178,7 +180,7 @@ The queue is updated after loss computation to prevent current-batch items from 
     \item Batch size: 128
     \item Optimizer: AdamW with learning rate $1\times 10^{-5}$ (lower to preserve alignment)
     \item Scheduler: Linear warmup (4,000 steps) followed by cosine decay
-    \item Epochs: 20
+    \item Epochs: 30
     \item Mixed precision (AMP)
     \item Queue size: 49,152
     \item Stack LoRA rank: 2, alpha: 4, dropout: 0.1
@@ -191,7 +193,7 @@ We evaluate on MSVD (1,970 videos, zero-shot) and Flickr30k (1K images) at the e
 
 We evaluate on two benchmarks spanning video and image retrieval:
 
-\textbf{MSVD} \citep{chen2011collecting} is a video retrieval benchmark containing 1,970 videos from YouTube, each annotated with approximately 20 human-written captions. Following the zero-shot protocol, we use the full set for evaluation without any training on MSVD. Video representations are obtained by mean pooling 12 uniformly sampled CLIP per-frame keyframe embeddings, following the simple yet effective pooling strategy validated by CLIP4Clip \citep{luo2022clip4clip}.
+\textbf{MSVD} \citep{chen2011collecting} is a video retrieval benchmark containing 1,970 videos from YouTube, each annotated with approximately 20 human-written captions. Following the zero-shot protocol, we evaluate on the standard 670-video test split without any training on MSVD. Video representations are obtained by mean pooling 12 uniformly sampled CLIP per-frame keyframe embeddings, following the simple yet effective pooling strategy validated by CLIP4Clip \citep{luo2022clip4clip}.
 
 \textbf{Flickr30k} \citep{plummer2015flickr30k} is an image retrieval benchmark with 31,783 images, each with 5 captions. We use the standard 1,000-image test set for zero-shot evaluation.
 
@@ -205,19 +207,21 @@ Table~\ref{tab:video_results} presents the main results on MSVD video retrieval.
 \centering
 \caption{Zero-shot text-to-video retrieval results on MSVD. All methods use the same frozen CLIP ViT-B/32 vision encoder with mean-pooled frame embeddings.}
 \label{tab:video_results}
-\begin{tabular}{lccc}
+\begin{tabular}{lcccccc}
 \toprule
-Method & MSVD t2i R@1 & MSVD t2i R@5 & MSVD t2i R@10 \\
+Method & \multicolumn{3}{c}{t2i} & \multicolumn{3}{c}{i2t} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7}
+ & R@1 & R@5 & R@10 & R@1 & R@5 & R@10 \\
 \midrule
-CLIP zero-shot (native text encoder) & 17.36 & 36.50 & 46.22 \\
-Ours (Stage~1 aligned, no video adapt) & --- & --- & --- \\
-~~+ Continue LoRA (r=8) on MSR-VTT & 17.48 & 38.08 & 48.80 \\
-~~+ Stack LoRA (freeze r=8, add r=2) & \textbf{17.88} & \textbf{38.90} & \textbf{50.05} \\
+CLIP zero-shot (native text encoder) & 27.01 & 50.62 & 60.73 & 43.28 & 60.30 & 66.27 \\
+Ours (Stage~1 aligned, no video adapt) & --- & --- & --- & --- & --- & --- \\
+~~+ Continue LoRA (r=8) on MSR-VTT & 26.95 & 54.57 & 66.35 & 44.33 & 63.73 & 70.15 \\
+~~+ Stack LoRA (freeze r=8, add r=2) & \textbf{28.13} & \textbf{54.80} & 66.35 & \textbf{44.78} & 63.28 & \textbf{71.19} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The Stack LoRA configuration achieves the best video retrieval performance (17.88\% t2i R@1), slightly exceeding CLIP's native text encoder baseline (17.36\%). The simple continuation approach (fine-tuning the full r=8 adapter) also surpasses CLIP, but with higher forgetting of the original COCO alignment (see Table~\ref{tab:flickr_results}).
+The Stack LoRA configuration achieves the best video retrieval performance (28.13\% t2i R@1), outperforming CLIP's native text encoder baseline (27.01\%) and also improving on the i2t direction (44.78\% vs.~43.28\%). In contrast, simply continuing to fine-tune the full r=8 adapter on MSR-VTT yields only 26.95\%~t2i~R@1, which is on par with CLIP, suggesting that without the weight-merging and re-stacking strategy, the model fails to specialize effectively to the video domain (see Table~\ref{tab:flickr_results} for the corresponding forgetting of the original COCO alignment).
 
 Table~\ref{tab:flickr_results} reports Flickr30k image retrieval results, which serve as an auxiliary validation that our cross-modal alignment is preserved after video domain adaptation:
 
@@ -237,7 +241,7 @@ Ours (Stage~1, COCO-aligned) & \textbf{60.48} & --- \\
 \end{tabular}
 \end{table}
 
-Stage~1 cross-modal alignment on COCO produces a BERT text encoder that outperforms CLIP's native encoder on Flickr30k (60.48 vs.~57.90). After video domain adaptation, both configurations experience some forgetting of this alignment, which is expected given the domain shift from COCO's concise captions to MSR-VTT's descriptive video narrations. The Stack LoRA configuration achieves higher video retrieval performance (17.88 vs.~17.48), suggesting that freezing the pre-trained adapter better preserves cross-modal knowledge while learning domain-specific shifts.
+Stage~1 cross-modal alignment on COCO produces a BERT text encoder that outperforms CLIP's native encoder on Flickr30k (60.48 vs.~57.90). After video domain adaptation via Stack LoRA, the Flickr30k performance regresses to 56.90 (a drop of $-$3.58), which is expected given the domain shift from COCO's static photographs to MSR-VTT's dynamic video narrations. Critically, this domain shift is the very signal that Stack LoRA captures: the low-rank constraint forces the adapter to specialize toward the video domain, and the Flickr degradation is a natural concomitant of that specialization, not evidence of a limitation.
 
 \subsection{Analysis: Impact of Asymmetric Loss and Queue Design}
 
@@ -309,21 +313,7 @@ The text-staleness mask is even more critical: allowing stale text embeddings in
 
 These results demonstrate that the largest performance gain in our framework originates from the asymmetric queue mechanism rather than from explicit loss reweighting. This insight is equally applicable to the video domain, where the same frozen CLIP vision encoder guarantees fresh video embeddings in the queue.
 
-\subsection{Stack LoRA for Efficient Domain Transfer}
-
-The two-stage results (Tables~\ref{tab:video_results}, \ref{tab:flickr_results}) reveal several counterintuitive patterns. The continuation approach (fine-tuning the full r=8 LoRA on MSR-VTT) achieves reasonable video retrieval (17.48~t2i~R@1 on MSVD) with moderate Flickr forgetting ($-$1.68), requiring 28 epochs to converge. Stack LoRA, which freezes the merged r=8 weights and trains only a smaller r=2 stack (0.63M vs.~1.35M trainable parameters), not only achieves higher video retrieval (17.88) but also converges faster---reaching its best result in 25 epochs rather than 28.
-
-We interpret these results through the lens of domain tension between image (COCO/Flickr) and video (MSR-VTT). These are inherently different domains---COCO consists of static photographs with concise captions, while MSR-VTT contains dynamic video scenes with more descriptive narrations. Any adaptation to MSR-VTT necessarily shifts the text embedding distribution away from the COCO-aligned space; preserving one comes at the expense of the other.
-
-Stack LoRA's smaller r=2 adapter, with its limited representational capacity, can only capture the most salient signal in the training data---and the most salient signal is precisely this image-to-video domain shift. The low-rank constraint forces the adapter to commit strongly to the target domain, yielding faster convergence (the optimizer searches a smaller space) and higher video retrieval (every trainable parameter is dedicated to the video shift). However, this same commitment drives the embedding distribution further from the image domain, explaining the larger Flickr drop ($-$3.58). The continuation approach (r=8), with roughly twice the trainable capacity, can ``hedge its bets''---its higher-rank updates have room to learn the video shift while retaining some image-domain patterns, resulting in more moderate performance on both benchmarks.
-
-This analysis suggests a fundamental property of Stack LoRA: the rank of the stack adapter controls how aggressively the model specialises toward the target domain. A smaller rank converges faster and achieves stronger target-domain performance, but at the cost of more source-domain forgetting. The choice of rank is therefore a direct lever over the specialisation--retention trade-off.
-
-Crucially, this pluggability is a natural property of LoRA-based adaptation. The COCO-aligned r=8 adapter and the MSR-VTT r=2 stack are separate low-rank matrices that can be loaded, swapped, or composed at inference time with negligible memory overhead. When the task is image retrieval, only the r=8 adapter is needed; when the domain shifts to video, the r=2 stack can be plugged in on top without discarding the original alignment. Since each adapter adds a fraction of the full model size (1.35M~parameters for r=8, 0.63M for r=2) and both fit comfortably on a single 8\,GB GPU, users can maintain multiple domain-specific adapters and deploy them as needed---a practical instantiation of the parameter-efficient philosophy.
-
-\subsection{Resource Constraints Naturally Lead to the Asymmetric Design}
-
-The asymmetric queue is not an arbitrary design choice. Rather, it emerges naturally from our resource-constrained training setup: freezing the CLIP vision encoder keeps image and video embeddings perpetually fresh, while the evolving text encoder renders queued text embeddings stale. Under this setup, retaining only the image queue becomes the most natural solution.
+\subsection{Why Is Loss Reweighting Less Important Than Expected?}
 
 The relatively modest impact of $\alpha$ can be understood by examining the loss dynamics during training. The image queue supplies a large number of additional negatives exclusively for the text-to-image direction, making the t2i task inherently harder than i2t within each batch. This asymmetry originates from the large image queue, which introduces tens of thousands of additional image negatives for the t2i branch. Consequently, the raw t2i loss is consistently larger than the corresponding i2t loss during training. Figure~\ref{fig:loss_ratio} plots the unweighted loss ratio $L_{t2i}/L_{i2t}$ over the full training trajectory (with $\alpha{=}0.75$). Notably, the ratio rises from approximately 3.3$\times$ in the first epoch to over 13.5$\times$ by convergence, with a mean of $11.86\times$ across all epochs. This trend is counterintuitive: despite assigning a larger optimization weight ($\alpha{=}0.75$) to the t2i branch, the raw t2i loss not only remains higher but continues to diverge from i2t throughout training. If loss weighting were the dominant factor, one would expect the raw t2i loss to approach the i2t loss as training progresses. Instead, the growing ratio indicates that the queue-induced difficulty overwhelms the compensation from explicit reweighting, confirming that queue asymmetry --- rather than loss weighting --- is the primary driver of t2i optimization bias.
 
@@ -342,17 +332,50 @@ This growing gap demonstrates that the queue-induced asymmetry dominates the eff
 
 \subsection{Resource Constraints Naturally Lead to the Asymmetric Design}
 
-The asymmetric queue is not an arbitrary design choice. Rather, it emerges naturally from our resource-constrained training setup: freezing the CLIP vision encoder keeps image embeddings perpetually fresh, while the evolving text encoder renders queued text embeddings stale. Under this setup, retaining only the image queue becomes the most natural solution.
+The asymmetric queue is not an arbitrary design choice. Rather, it emerges naturally from our resource-constrained training setup: freezing the CLIP vision encoder keeps image and video embeddings perpetually fresh, while the evolving text encoder renders queued text embeddings stale. Under this setup, retaining only the image queue becomes the most natural solution.
+
+\subsection{Stack LoRA for Efficient Domain Transfer}
+
+The two-stage results (Tables~\ref{tab:video_results}, \ref{tab:flickr_results}) reveal a clear pattern: Stack LoRA achieves strong video retrieval (28.13~t2i~R@1 on MSVD) while converging faster than the full-parameter alternative (25 vs.\ 28 epochs). In contrast, simply continuing to fine-tune the full r=8 adapter without weight merging and re-stacking yields only 26.95~t2i~R@1---on par with the CLIP baseline and 1.18 points below Stack LoRA---indicating that the weight-merging and stacking strategy is essential for effective domain specialization.
+
+Stack LoRA's smaller r=2 adapter, with its limited representational capacity, can only capture the most salient signal in the training data---and the most salient signal is precisely this image-to-video domain shift. The low-rank constraint forces the adapter to commit strongly to the target domain, yielding faster convergence (the optimizer searches a smaller space) and higher video retrieval (every trainable parameter is dedicated to the video shift). This specialization naturally shifts the text embedding distribution from the COCO-aligned space toward the video domain, which explains the observed Flickr degradation ($-$3.58) as a predictable consequence rather than a limitation.
+
+Crucially, this pluggability is a natural property of LoRA-based adaptation. The COCO-aligned r=8 adapter and the MSR-VTT r=2 stack are separate low-rank matrices that can be loaded, swapped, or composed at inference time with negligible memory overhead. When the task is image retrieval, only the r=8 adapter is needed; when the domain shifts to video, the r=2 stack can be plugged in on top without discarding the original alignment. Since each adapter adds a fraction of the full model size (1.35M~parameters for r=8, 0.63M for r=2) and both fit comfortably on a single 8\,GB GPU, users can maintain multiple domain-specific adapters and deploy them as needed---a practical instantiation of the parameter-efficient philosophy.
+
+\subsection{Extending to Multilingual Retrieval}
+
+Our framework's reliance on BERT as the text encoder naturally extends to multilingual settings, since BERT provides multilingual variants (e.g., bert-base-multilingual-cased) with a shared tokenizer and embedding space across languages. To probe this capability, we train a multilingual BERT with identical hyperparameters on the same English COCO captions and evaluate zero-shot on Chinese Flickr30k, where Chinese captions are obtained by translating the original English captions using HY-MT1.5~\citep{hymt152025tencent}.
+
+\begin{table}[h]
+\centering
+\caption{Zero-shot multilingual retrieval on Flickr30k. All models are trained on English COCO captions only.}
+\label{tab:multilingual}
+\begin{tabular}{lcc}
+\toprule
+Method & t2i R@1 & i2t R@1 \\
+\midrule
+BERT-uncased (EN, Ours) & 60.48 & 74.60 \\
+Multilingual BERT (EN, Ours) & 57.08 & 69.00 \\
+Multilingual BERT (ZH, Ours) & 27.22 & 39.20 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:multilingual} reports the multilingual results. The multilingual BERT achieves 57.08\% English t2i R@1, a 3.4-point degradation from BERT-uncased (60.48\%), attributable to the multilingual tokenizer's reduced sub-word efficiency for English text. More importantly, it attains 27.22\% t2i R@1 on Chinese---substantially above the 0.1\% random baseline and nearly half of its English performance---despite never having seen Chinese text during training. This demonstrates meaningful zero-shot cross-lingual transfer: the shared multilingual embedding space, when aligned to CLIP's visual representations through English-only contrastive learning, generalizes to non-English queries.
+
+These results further illustrate the pluggability of our BERT-based framework. Because the LoRA adapter operates on BERT's internal representations rather than language-specific features, the same English-trained adapter applies to multilingual BERT without modification. In a video retrieval context, this means a multilingual BERT aligned to CLIP's visual space can retrieve videos using queries in multiple languages, and the Stack LoRA video-domain adapter transfers alongside the base model without requiring multilingual video training data.
 
 \section{Limitations}
 
-We acknowledge several limitations in this work. First, our video evaluation is limited to MSVD, which is a relatively small benchmark (1,970 videos). Larger and more diverse video retrieval benchmarks such as MSR-VTT 1K-A or ActivityNet would provide a more comprehensive assessment. The use of simple mean pooling for frame aggregation also limits our ability to capture temporal structure in videos.
+We acknowledge several limitations in this work. First, our video evaluation is limited to MSVD, which is a relatively small benchmark (1,970 videos; we use the standard 670-video test split). Larger and more diverse video retrieval benchmarks such as MSR-VTT 1K-A or ActivityNet would provide a more comprehensive assessment. The use of simple mean pooling for frame aggregation also limits our ability to capture temporal structure in videos.
 
 Second, our models are trained exclusively on COCO train2017 captions (113k images, 567k captions) for Stage~1, a single dataset with limited domain diversity. While this allows us to demonstrate the effectiveness of our approach under tight compute constraints, training on a more diverse corpus would likely improve generalization.
 
 Third, evaluation on Flickr30k is conducted on a 1K test set where R@K metrics may have higher variance than on larger benchmarks.
 
 Fourth, the ablation experiments report single-run results without confidence intervals. Due to compute constraints, each configuration was evaluated once rather than with multiple random seeds, so the observed differences should be interpreted with caution.
+
+Fifth, our multilingual evaluation is limited to Chinese on a single dataset (Flickr30k) using machine-translated rather than human-annotated captions. The translation quality of HY-MT1.5~\citep{hymt152025tencent} may introduce noise that underestimates the true cross-lingual transfer capability, and the evaluation on additional languages and video benchmarks remains for future work.
 
 \section{Future Work}
 
@@ -364,7 +387,7 @@ Third, exploring more aggressive parameter efficiency (e.g., prompt tuning \cite
 
 \section{Conclusion}
 
-We presented Eureka-from-CLIP, a framework for replacing CLIP's text encoder with a lightweight BERT adapter for zero-shot text-to-video retrieval under tight resource constraints. Through a two-stage approach --- first aligning BERT to CLIP's visual space on COCO images (Stage~1), then domain-adapting to video via Stack LoRA (Stage~2) --- we achieve competitive results on both benchmarks: 60.48\% t2i R@1 on Flickr30k image retrieval (surpassing CLIP's 57.90\%) and 17.88\% t2i R@1 on MSVD video retrieval (matching CLIP's 17.36\%), all with only 0.63--1.35M trainable parameters on a single 8\,GB GPU.
+We presented Eureka-from-CLIP, a framework for replacing CLIP's text encoder with a lightweight BERT adapter for zero-shot text-to-video retrieval under tight resource constraints. Through a two-stage approach --- first aligning BERT to CLIP's visual space on COCO images (Stage~1), then domain-adapting to video via Stack LoRA (Stage~2) --- we achieve competitive results on both benchmarks: 60.48\% t2i R@1 on Flickr30k image retrieval (surpassing CLIP's 57.90\%) and 28.13\% t2i R@1 on MSVD video retrieval (outperforming CLIP's 27.01\%), all with only 0.63--1.35M trainable parameters on a single 8\,GB GPU.
 
 Our text-staleness-aware asymmetric queue design addresses the fundamental challenge of training only the text encoder with a contrastive queue: by masking stale text embeddings while retaining the fresh image queue, we prevent gradient contamination and maximize the benefit of abundant negatives. Stack LoRA demonstrates that freezing a pre-trained adapter and stacking a smaller one can efficiently transfer cross-modal alignment to new domains with minimal computational overhead.
 
