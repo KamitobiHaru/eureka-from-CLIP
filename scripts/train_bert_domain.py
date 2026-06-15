@@ -30,7 +30,7 @@ from src.training.evaluation import compute_recall_metrics
 FLICKR_ROOT = Path("./dataset_annotation")
 
 
-def _build_bert(cfg, device) -> BertEncoder:
+def _build_bert(cfg, device, use_lora_stack=False) -> BertEncoder:
     bert_path = cfg["model"]["bert_model_path"]
     lora_cfg = cfg.get("lora", {})
     print("Building BERT encoder (with LoRA)...")
@@ -43,16 +43,23 @@ def _build_bert(cfg, device) -> BertEncoder:
 
     ckpt_path = cfg["checkpoint"]["bert_pretrain"]
     print(f"Loading BERT from: {ckpt_path}")
-    ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
-    missing, unexpected = model.load_state_dict(ckpt["model_state_dict"], strict=False)
-    if missing:
-        print(f"  Missing keys: {missing}")
-    if unexpected:
-        print(f"  Unexpected keys: {unexpected}")
+
+    if use_lora_stack:
+        stack_lora_cfg = cfg["stack_lora"]
+        print(f"  LoRA stacking: base r={lora_cfg.get('r')} (frozen) "
+              f"+ stack r={stack_lora_cfg['r']} (trainable)")
+        model.load_and_stack_lora(ckpt_path, stack_lora_cfg)
+    else:
+        ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
+        missing, unexpected = model.load_state_dict(ckpt["model_state_dict"], strict=False)
+        if missing:
+            print(f"  Missing keys: {missing}")
+        if unexpected:
+            print(f"  Unexpected keys: {unexpected}")
 
     total = sum(p.numel() for p in model.parameters())
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"  BERT: {total:,} total, {trainable:,} trainable (LoRA + proj)")
+    print(f"  BERT: {total:,} total, {trainable:,} trainable")
     return model
 
 
@@ -193,6 +200,8 @@ def main():
     parser.add_argument("--config", default="config/bert_domain.yaml")
     parser.add_argument("--resume", default=None)
     parser.add_argument("--device", default=None)
+    parser.add_argument("--use_lora_stack", action="store_true",
+                        help="Freeze base LoRA (from COCO), add and train a smaller stack LoRA on top")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -205,7 +214,7 @@ def main():
     t_cfg = cfg["training"]
 
     # ── Model ──
-    bert_model = _build_bert(cfg, device)
+    bert_model = _build_bert(cfg, device, use_lora_stack=args.use_lora_stack)
 
     # ── Data ──
     train_loader, msvd_loader, tokenizer = _build_dataloaders(cfg)

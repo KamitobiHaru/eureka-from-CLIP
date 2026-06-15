@@ -35,6 +35,12 @@ lora:
   dropout: 0.1
   target_modules: ["key", "query", "value", "output.dense"]
 
+stack_lora:
+  r: 2
+  alpha: 4
+  dropout: 0.1
+  target_modules: ["key", "query", "value", "output.dense"]
+
 queue:
   enabled: true
   max_size: 49152

@@ -57,6 +57,8 @@ class BertEncoder(nn.Module):
             self.lora_config = lora_cfg
             self._apply_lora(lora_cfg)
 
+        self._stack_lora_config: Optional[Dict[str, Any]] = None
+
         self._log_params()
 
     # ── LoRA ─────────────────────────────────────────────────────────────────────
@@ -83,6 +85,47 @@ class BertEncoder(nn.Module):
         self.bert.gradient_checkpointing_enable()
         self._peft_config = lora_config  # keep a reference for checkpoint metadata
 
+    def load_and_stack_lora(self, checkpoint_path: str, stack_lora_cfg: Dict[str, Any]) -> None:
+        """Load pretrained LoRA checkpoint and stack a new smaller LoRA on top.
+
+        The model must already have a LoRA adapter ``"default"`` applied (via
+        :meth:`_apply_lora` in ``__init__``).  This method:
+
+        1. Loads checkpoint weights into the ``"default"`` adapter, projection
+           head, and logit scale.
+        2. Freezes the ``"default"`` LoRA weights.
+        3. Adds a new ``"stack"`` LoRA adapter with a smaller rank (e.g. r=2).
+        4. Enables both adapters in the forward pass.
+        """
+        try:
+            from peft import LoraConfig, TaskType
+        except ImportError:
+            raise ImportError("LoRA stacking requires `peft`.\n  pip install peft>=0.12.0")
+
+        ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+        self.load_state_dict(ckpt["model_state_dict"], strict=False)
+
+        # Freeze the "default" (base) LoRA adapter
+        for name, param in self.bert.named_parameters():
+            if "lora" in name and "default" in name:
+                param.requires_grad_(False)
+
+        # Add the "stack" LoRA adapter
+        stack_config = LoraConfig(
+            r=stack_lora_cfg["r"],
+            lora_alpha=stack_lora_cfg["alpha"],
+            lora_dropout=stack_lora_cfg.get("dropout", 0.1),
+            target_modules=stack_lora_cfg.get("target_modules", ["query", "value"]),
+            bias="none",
+            task_type=TaskType.FEATURE_EXTRACTION,
+        )
+        self.bert.add_adapter("stack", stack_config)
+        self.bert.active_adapter = ["default", "stack"]
+
+        self._stack_lora_config = stack_lora_cfg
+
+        self._log_params()
+
     # ── Forward ──────────────────────────────────────────────────────────────────
 
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
@@ -108,6 +151,10 @@ class BertEncoder(nn.Module):
         frozen = total - trainable
         print(f"  BERT params: {total:,} total, {trainable:,} trainable, {frozen:,} frozen")
         if self.lora_config:
-            print(f"  LoRA config: r={self.lora_config.get('r', 8)}, "
+            print(f"  Base LoRA config: r={self.lora_config.get('r', 8)}, "
                   f"alpha={self.lora_config.get('alpha', 16)}, "
                   f"target_modules={self.lora_config.get('target_modules', ['query', 'value'])}")
+        if self._stack_lora_config:
+            sc = self._stack_lora_config
+            print(f"  Stack LoRA config: r={sc['r']}, alpha={sc['alpha']}, "
+                  f"target_modules={sc.get('target_modules', ['query', 'value'])}")
