@@ -63,7 +63,7 @@ def _build_bert(cfg, device, use_lora_stack=False) -> BertEncoder:
     return model
 
 
-def _build_dataloaders(cfg):
+def _build_dataloaders(cfg, msvd_test_list: str = None):
     msrvtt_cfg = cfg["data"]["msrvtt"]
     frame_cache = msrvtt_cfg["frame_cache"]
     train_ann = os.path.join(msrvtt_cfg["root"], msrvtt_cfg["train_annotation"])
@@ -86,7 +86,16 @@ def _build_dataloaders(cfg):
     )
     print(f"  MSR-VTT train: {len(train_dataset):,} caption-video pairs")
 
+    # Load MSVD, optionally filter to test_list only
     msvd_dataset = VideoDataset(msvd_ann, msvd_cache)
+    if msvd_test_list:
+        with open(msvd_test_list) as f:
+            allowed = {line.strip() for line in f if line.strip()}
+        before = len(msvd_dataset)
+        msvd_dataset.pairs = [(vid, cap) for vid, cap in msvd_dataset.pairs if vid in allowed]
+        print(f"  MSVD eval: {before} → {len(msvd_dataset)} (filtered by {Path(msvd_test_list).name})")
+    else:
+        print(f"  MSVD eval:   {len(msvd_dataset):,} caption-video pairs")
     msvd_loader = torch.utils.data.DataLoader(
         msvd_dataset,
         batch_size=cfg["training"]["batch_size"] * 2,
@@ -95,7 +104,6 @@ def _build_dataloaders(cfg):
         collate_fn=video_collate_fn(tokenizer),
         pin_memory=True,
     )
-    print(f"  MSVD eval:   {len(msvd_dataset):,} caption-video pairs")
 
     return train_loader, msvd_loader, tokenizer
 
@@ -202,6 +210,8 @@ def main():
     parser.add_argument("--device", default=None)
     parser.add_argument("--use_lora_stack", action="store_true",
                         help="Freeze base LoRA (from COCO), add and train a smaller stack LoRA on top")
+    parser.add_argument("--msvd_test_list", default=None,
+                        help="Filter MSVD eval to only these video IDs (one per line, e.g. data/msvd/test_list.txt)")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -217,7 +227,7 @@ def main():
     bert_model = _build_bert(cfg, device, use_lora_stack=args.use_lora_stack)
 
     # ── Data ──
-    train_loader, msvd_loader, tokenizer = _build_dataloaders(cfg)
+    train_loader, msvd_loader, tokenizer = _build_dataloaders(cfg, msvd_test_list=args.msvd_test_list)
 
     # ── Queue & Loss ──
     q_cfg = cfg.get("queue", {})

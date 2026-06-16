@@ -30,19 +30,23 @@ from src.training.evaluation import compute_recall_metrics
 # ── Paths ──────────────────────────────────────────────────────────────────────
 TEST_LIST = Path("./data/msvd/test_list.txt")
 MSVD_ANN = Path("./data/msvd/msvd_all.json")
-MSVD_FRAMES = Path("./data/msvd/clip_keyframes")
 BERT_MODEL_PATH = Path("./models/bert-base-uncased")
 NUM_FRAMES = 12
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 CHECKPOINTS = {
+    "Ours (Stage 1, COCO对齐)": {
+        "path": "/run/media/occccce/D/checkpoints/bert_epoch26_t2i60.5.pt",
+        "lora_r": 8,
+        "lora_alpha": 16,
+    },
     "Ours (Stack LoRA)": {
-        "path": "/data2/zsy/weights/clip/bert_domain_best_e25_msvd17.9.pt",
+        "path": "/run/media/occccce/D/checkpoints/bert_domain_stack_lora_1e-5_batch128/bert_domain_best_e25_msvd17.9.pt",
         "lora_r": 2,
         "lora_alpha": 4,
     },
     "Ours (No Stack)": {
-        "path": "/data2/zsy/weights/clip/bert_domain_best_e28_msvd17.5.pt",
+        "path": "/run/media/occccce/D/checkpoints/bert_domain_1e-5_batch128/bert_domain_e30_msvd17.5.pt",
         "lora_r": 8,
         "lora_alpha": 16,
     },
@@ -128,7 +132,10 @@ def encode_texts_bert(texts, bert_model, tokenizer, device, batch_size=128):
 def main():
     parser = argparse.ArgumentParser(description="Evaluate MSVD test-set recall")
     parser.add_argument("--device", default=None)
+    parser.add_argument("--frame_cache", default="./data/msvd/clip_keyframes",
+                        help="Directory with per-video (N, 512) .npy frame embeddings")
     args = parser.parse_args()
+    MSVD_FRAMES = Path(args.frame_cache)
 
     device = args.device or DEVICE
     print(f"Device: {device}\n")

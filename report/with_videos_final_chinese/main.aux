@@ -55,12 +55,12 @@
 \newlabel{tab:video_results}{{2}{7}{MSVD上零样本文本-视频检索结果。所有方法使用相同的冻结CLIP ViT-B/32视觉编码器，采用均值池化的帧嵌入。}{table.2}{}}
 \@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Flickr30k测试集（1K图像）上的零样本图像检索结果。第一阶段结果是任何视频适配前COCO训练模型的性能。}}{7}{table.3}\protected@file@percent }
 \newlabel{tab:flickr_results}{{3}{7}{Flickr30k测试集（1K图像）上的零样本图像检索结果。第一阶段结果是任何视频适配前COCO训练模型的性能。}{table.3}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}分析：非对称损失和队列设计的影响}{7}{subsection.4.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}消融实验：非对称损失和队列设计的影响}{7}{subsection.4.3}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces 框架中各队列组件的消融实验。}}{7}{table.4}\protected@file@percent }
 \newlabel{tab:ablation}{{4}{7}{框架中各队列组件的消融实验。}{table.4}{}}
 \@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces 非对称损失权重$\alpha $对检索性能的影响。}}{8}{table.5}\protected@file@percent }
 \newlabel{tab:alpha}{{5}{8}{非对称损失权重$\alpha $对检索性能的影响。}{table.5}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}消融：参数分布（LoRA对比MLP投影）}{8}{subsection.4.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}参数消融：参数分布（LoRA对比MLP投影）}{8}{subsection.4.4}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces 消融实验：LoRA对比MLP投影（可训练参数数量相当）。两种模型均在COCO上训练，在Flickr30k上进行零样本评估。}}{8}{table.6}\protected@file@percent }
 \newlabel{tab:ablation_mlp}{{6}{8}{消融实验：LoRA对比MLP投影（可训练参数数量相当）。两种模型均在COCO上训练，在Flickr30k上进行零样本评估。}{table.6}{}}
 \@writefile{toc}{\contentsline {section}{\numberline {五、}讨论}{8}{section.5}\protected@file@percent }
@@ -74,22 +74,26 @@
 \@writefile{toc}{\contentsline {subsection}{\numberline {5.5}扩展到多语言检索}{10}{subsection.5.5}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces Flickr30k上的零样本多语言检索。所有模型仅使用英文COCO描述进行训练。}}{10}{table.7}\protected@file@percent }
 \newlabel{tab:multilingual}{{7}{10}{Flickr30k上的零样本多语言检索。所有模型仅使用英文COCO描述进行训练。}{table.7}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {六、}局限性}{10}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.6}帧采样策略的影响：关键帧检测与均匀采样对比}{10}{subsection.5.6}\protected@file@percent }
+\citation{luo2022clip4clip}
 \citation{hymt152025tencent}
 \citation{gorti2022xpool}
+\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces 帧采样策略对比（MSVD零样本视频检索，Stack LoRA配置）。两种策略均使用12帧预算和均值池化。}}{11}{table.8}\protected@file@percent }
+\newlabel{tab:sampling}{{8}{11}{帧采样策略对比（MSVD零样本视频检索，Stack LoRA配置）。两种策略均使用12帧预算和均值池化。}{table.8}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {六、}局限性}{11}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {七、}未来工作}{11}{section.7}\protected@file@percent }
 \citation{huang2023vop}
 \citation{cao2024acl}
 \bibstyle{plainnat}
 \bibcite{radford2021clip}{{1}{2021}{{Radford et al.}}{{Radford, Kim, Hallacy, Ramesh, Goh, Agarwal, Sastry, Askell, Mishkin, Clark, Krueger, and Sutskever}}}
 \bibcite{devlin2019bert}{{2}{2019}{{Devlin et al.}}{{Devlin, Chang, Lee, and Toutanova}}}
 \bibcite{he2020moco}{{3}{2020}{{He et al.}}{{He, Fan, Wu, Xie, and Girshick}}}
-\@writefile{toc}{\contentsline {section}{\numberline {七、}未来工作}{11}{section.7}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {八、}结论}{11}{section.8}\protected@file@percent }
 \bibcite{hu2022lora}{{4}{2022}{{Hu et al.}}{{Hu, Shen, Wallis, Allen-Zhu, Li, Wang, Wang, and Chen}}}
 \bibcite{chen2022altclip}{{5}{2022}{{Chen et al.}}{{Chen, Liu, Zhang, Ye, Yang, and Wu}}}
 \bibcite{yang2022chinese}{{6}{2022}{{Yang et al.}}{{Yang, Pan, Lin, Men, Zhang, Zhou, and Zhou}}}
 \bibcite{oord2018representation}{{7}{2018}{{van den Oord et al.}}{{van den Oord, Li, and Vinyals}}}
 \bibcite{young2014flickr30k}{{8}{2014}{{Young et al.}}{{Young, Lai, Hodosh, and Hockenmaier}}}
+\@writefile{toc}{\contentsline {section}{\numberline {八、}结论}{12}{section.8}\protected@file@percent }
 \bibcite{lin2014coco}{{9}{2014}{{Lin et al.}}{{Lin, Maire, Belongie, Hays, Perona, Ramanan, Dollár, and Zitnick}}}
 \bibcite{conneau2020xlmr}{{10}{2020}{{Conneau et al.}}{{Conneau, Khandelwal, Goyal, Chaudhary, Wenzek, Guzmán, Grave, Ott, Zettlemoyer, and Stoyanov}}}
 \bibcite{zhai2022lit}{{11}{2022}{{Zhai et al.}}{{Zhai, Wang, Mustafa, Steiner, Keysers, Kolesnikov, and Beyer}}}
@@ -107,7 +111,7 @@
 \bibcite{chen2011collecting}{{23}{2011}{{Chen and Dolan}}{{}}}
 \bibcite{claudecode2025}{{24}{2025}{{Chatlatanagulchai et al.}}{{Chatlatanagulchai, Thonglek, Reid, Kashiwa, Leelaprute, Rungsawang, Manaskasemsak, and Iida}}}
 \bibcite{deepseekv4}{{25}{2026}{{DeepSeek-AI}}{{}}}
-\@writefile{toc}{\contentsline {section}{\numberline {九、}超参数选择}{13}{section.9}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces 关键超参数。CLIP ViT-B/32（OpenAI）基线：t2i R@1~57.90\%，i2t R@1~76.90\%。}}{13}{table.8}\protected@file@percent }
-\newlabel{tab:hyperparams}{{8}{13}{关键超参数。CLIP ViT-B/32（OpenAI）基线：t2i R@1~57.90\%，i2t R@1~76.90\%。}{table.8}{}}
-\gdef \@abspage@last{13}
+\@writefile{toc}{\contentsline {section}{\numberline {九、}超参数选择}{14}{section.9}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces 关键超参数。CLIP ViT-B/32（OpenAI）基线：t2i R@1~57.90\%，i2t R@1~76.90\%。}}{14}{table.9}\protected@file@percent }
+\newlabel{tab:hyperparams}{{9}{14}{关键超参数。CLIP ViT-B/32（OpenAI）基线：t2i R@1~57.90\%，i2t R@1~76.90\%。}{table.9}{}}
+\gdef \@abspage@last{14}
