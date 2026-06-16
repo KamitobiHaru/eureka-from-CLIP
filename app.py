@@ -109,7 +109,24 @@ def _build_engine(model_config: dict, device: str = None) -> SearchEngine:
 
 def process_videos(folder_path: str, model_config: dict, device: str,
                    progress=gr.Progress()):
-    """Process all videos in a folder. Returns (engine_state, gallery, status)."""
+    """Process all videos or load from cache. Returns (engine_state, gallery, status)."""
+    engine = _build_engine(model_config, device=device)
+
+    cache_path = model_config.get("cache_path")
+    if cache_path:
+        progress(0, desc="Loading cache...")
+        n = engine.load_cache(cache_path)
+        if n == 0:
+            raise gr.Error("Cache is empty.")
+        gallery = []
+        for s in engine.scenes:
+            gallery.append((
+                s.thumbnail,
+                f"[{s.video_id}] {s.start_sec:.1f}s → {s.end_sec:.1f}s ({s.duration:.1f}s)"
+            ))
+        progress(1.0, desc="Done!")
+        return engine, gallery, f"✅ Loaded {n} videos from cache."
+
     if not folder_path:
         raise gr.Error("Please enter a video folder path.")
 
@@ -124,8 +141,6 @@ def process_videos(folder_path: str, model_config: dict, device: str,
         raise gr.Error(f"No video files found in {folder_path}")
 
     progress(0.05, desc=f"Found {len(video_paths)} videos")
-
-    engine = _build_engine(model_config, device=device)
 
     for i, vp in enumerate(video_paths):
         progress(0.05 + 0.6 * (i / len(video_paths)),
@@ -198,7 +213,8 @@ def create_demo(device: str = None,
                 model: str = "clip",
                 bert_checkpoint: str = None,
                 config_path: str = "config/default.yaml",
-                video_dir: str = None):
+                video_dir: str = None,
+                cache_path: str = None):
     """Build and return the Gradio Blocks demo.
 
     Parameters are the CLI argument values used as UI defaults.
@@ -207,6 +223,7 @@ def create_demo(device: str = None,
     _bert_checkpoint = bert_checkpoint
     _config_path = config_path
     _device = device
+    _cache_path = cache_path
 
     def _confirm_model(use_temporal: bool, temporal_checkpoint: str,
                        bert_ckpt: str, mdl: str):
@@ -220,6 +237,7 @@ def create_demo(device: str = None,
             "model": resolved_model,
             "config_path": _config_path,
             "stack_lora_cfg": None,
+            "cache_path": _cache_path,
         }
         if use_temporal and temporal_checkpoint and resolved_bert:
             name = f"Temporal + {resolved_model}"
@@ -251,6 +269,7 @@ def create_demo(device: str = None,
             "model": _model,
             "config_path": _config_path,
             "stack_lora_cfg": None,
+            "cache_path": _cache_path,
         })
 
         with gr.Row(equal_height=False):
@@ -361,6 +380,9 @@ if __name__ == "__main__":
                         help="Path to YAML config (for BERT model path and stack_lora parameters).")
     parser.add_argument("--video-dir", default=None,
                         help="Default video folder path (can be overridden in the UI).")
+    parser.add_argument("--cache-path", default=None,
+                        help="Path to precomputed cache directory (from cache_videos.py). "
+                             "When set, video processing is skipped.")
     args = parser.parse_args()
 
     if args.model in ("bert-coco", "bert-stack-lora") and not args.bert_checkpoint:
@@ -372,6 +394,7 @@ if __name__ == "__main__":
         bert_checkpoint=args.bert_checkpoint,
         config_path=args.config,
         video_dir=args.video_dir,
+        cache_path=args.cache_path,
     )
 
     def find_free_port(start: int, max_attempts: int = 10) -> int:

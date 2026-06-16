@@ -44,7 +44,7 @@ def detect_scenes(video_path: str, num_frames: int = FRAMES_PER_SCENE) -> List[S
     if not raw_scenes:
         raw_scenes = [
             (FrameTimecode(0, video.frame_rate),
-             FrameTimecode(int(video.duration * video.frame_rate), video.frame_rate))
+             FrameTimecode(int(video.duration.get_seconds() * video.frame_rate), video.frame_rate))
         ]
 
     merged = _merge_short_scenes(raw_scenes, float(video.frame_rate), MIN_SCENE_DURATION)

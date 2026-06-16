@@ -27,20 +27,29 @@ def discover_videos(folder_path: str) -> List[str]:
     )
 
 
-class SearchEngine:
-    """Orchestrator: segment video(s) → encode scenes → rank by text query similarity.
+NUM_SAMPLED_FRAMES = 8  # frames per video for uniform sampling
 
-    Supports single-video processing (legacy) and multi-video folder processing.
-    Scenes from all videos are accumulated into a flat list for cross-video search.
+
+class SearchEngine:
+    """Orchestrator: process video(s) → encode → rank by text query similarity.
+
+    Two modes controlled by *uniform_sample*:
+
+    - ``uniform_sample=True`` (default): uniformly sample N frames per video,
+      mean-pool into a single video-level embedding — no scene detection.
+    - ``uniform_sample=False``: use PySceneDetect to split each video into scenes,
+      then encode each scene independently (legacy behaviour).
     """
 
     def __init__(self, clip_encoder: CLIPEncoder = None,
                  text_encoder: Optional[Callable[[str], np.ndarray]] = None,
                  scene_encoder: Optional[Callable[[List[np.ndarray]], np.ndarray]] = None,
-                 device: str = None):
+                 device: str = None,
+                 uniform_sample: bool = True):
         self.encoder = clip_encoder or CLIPEncoder(device=device)
         self.text_encoder = text_encoder
         self.scene_encoder = scene_encoder
+        self.uniform_sample = uniform_sample
         self.scenes: List[Scene] = []
         self.scene_embs: np.ndarray = None
 
@@ -142,7 +151,49 @@ class SearchEngine:
         finally:
             cap.release()
 
-    # ── Core processing ──────────────────────────────────────────────
+    # ── Uniform sampling (no scene detection) ─────────────────────────
+
+    # ── Uniform sampling (no scene detection) ─────────────────────────
+
+    def _uniform_sample_video(self, video_path: str) -> Tuple[List[Scene], np.ndarray]:
+        """Uniformly sample *NUM_SAMPLED_FRAMES* frames across the whole video
+        and produce a single pooled embedding per video.
+        """
+        cap = cv2.VideoCapture(video_path)
+        try:
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            if total_frames <= 0:
+                return [], np.zeros((0, 512), dtype=np.float32)
+
+            n = min(NUM_SAMPLED_FRAMES, total_frames)
+            frame_idxs = np.linspace(0, total_frames - 1, n, dtype=int)
+
+            frames = []
+            for fidx in frame_idxs:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, int(fidx))
+                ret, frame = cap.read()
+                if ret:
+                    frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+
+            if not frames:
+                return [], np.zeros((0, 512), dtype=np.float32)
+        finally:
+            cap.release()
+
+        # Encode and mean-pool
+        if self.scene_encoder is not None:
+            emb = self.scene_encoder(frames)
+        else:
+            emb = self.encoder.encode_scene(frames)
+
+        duration = total_frames / fps if fps > 0 else 0.0
+        video_id = Path(video_path).stem
+        scene = Scene(video_id=video_id, scene_idx=0,
+                      start_sec=0.0, end_sec=duration, frames=frames)
+        return [scene], emb.reshape(1, -1)
+
+    # ── Core processing (cache-aware) ────────────────────────────────
 
     def _process_single_video(self, video_path: str) -> Tuple[List[Scene], np.ndarray]:
         """Process one video (cache-aware). Returns ``(scenes, embeddings)``.
@@ -156,20 +207,24 @@ class SearchEngine:
             self._reconstruct_frames(video_path, scenes)
             return scenes, scene_embs
 
-        scenes = detect_scenes(video_path)
-        if not scenes:
-            return [], np.zeros((0, 512), dtype=np.float32)
-
-        scene_embs_list = []
-        for scene in scenes:
-            if self.scene_encoder is not None:
-                emb = self.scene_encoder(scene.frames)
+        if self.uniform_sample:
+            scenes, scene_embs = self._uniform_sample_video(video_path)
+        else:
+            scenes = detect_scenes(video_path)
+            if scenes:
+                scene_embs_list = []
+                for scene in scenes:
+                    if self.scene_encoder is not None:
+                        emb = self.scene_encoder(scene.frames)
+                    else:
+                        emb = self.encoder.encode_scene(scene.frames)
+                    scene_embs_list.append(emb)
+                scene_embs = np.stack(scene_embs_list)
             else:
-                emb = self.encoder.encode_scene(scene.frames)
-            scene_embs_list.append(emb)
+                scene_embs = np.zeros((0, 512), dtype=np.float32)
 
-        scene_embs = np.stack(scene_embs_list)
-        self._save_video_cache(video_path, scenes, scene_embs)
+        if scenes:
+            self._save_video_cache(video_path, scenes, scene_embs)
         return scenes, scene_embs
 
     def process_video(self, video_path: str, append: bool = False) -> List[Scene]:
@@ -215,6 +270,8 @@ class SearchEngine:
         this call, ``self.scenes`` contains scenes from every video and
         ``self.video_map`` maps each ``video_id`` to its source path.
         """
+        from tqdm import tqdm
+
         video_paths = discover_videos(folder_path)
 
         self.scenes = []
@@ -222,8 +279,7 @@ class SearchEngine:
         self.video_map = {}
 
         print(f"Processing folder: {folder_path}  ({len(video_paths)} videos)")
-        for vp in video_paths:
-            print(f"  ── {Path(vp).name} ──")
+        for vp in tqdm(video_paths, desc="Videos", unit="video"):
             scenes, embs = self._process_single_video(vp)
             video_id = Path(vp).stem
 
@@ -235,10 +291,48 @@ class SearchEngine:
             elif len(scenes) > 0:
                 self.scene_embs = np.concatenate([self.scene_embs, embs], axis=0)
 
-            print(f"  → {len(scenes)} scenes from {Path(vp).name} "
-                  f"(total: {len(self.scenes)} scenes)")
-
         return self.scenes
+
+    # ── Load precomputed cache ──────────────────────────────────────
+
+    def load_cache(self, cache_dir: str) -> int:
+        """Load precomputed embeddings from ``cache_dir`` (created by ``cache_videos.py``).
+
+        Populates ``self.scenes``, ``self.scene_embs`` and ``self.video_map``.
+
+        Returns the number of videos loaded.
+        """
+        cache = Path(cache_dir)
+        emb_path = cache / "embeddings.npy"
+        meta_path = cache / "metadata.json"
+        map_path = cache / "video_map.json"
+
+        if not emb_path.exists():
+            raise FileNotFoundError(f"Cache not found: {emb_path}")
+        if not meta_path.exists():
+            raise FileNotFoundError(f"Cache not found: {meta_path}")
+
+        self.scene_embs = np.load(str(emb_path))
+        with open(meta_path) as f:
+            metadata = json.load(f)
+
+        self.scenes = []
+        for m in metadata:
+            self.scenes.append(Scene(
+                video_id=m["video_id"],
+                scene_idx=m.get("scene_idx", 0),
+                start_sec=m["start_sec"],
+                end_sec=m["end_sec"],
+                frames=[],
+            ))
+
+        if map_path.exists():
+            with open(map_path) as f:
+                self.video_map = json.load(f)
+
+        n = len(self.scenes)
+        print(f"  [cache] ✓ loaded {n} videos from {cache.resolve()}")
+        return n
 
     # ── Search ───────────────────────────────────────────────────────
 
