@@ -5,7 +5,7 @@ from pathlib import Path
 
 import gradio as gr
 
-from clip_search import SearchEngine, build_temporal_pipeline, load_text_encoder, discover_videos
+from clip_search import SearchEngine, load_text_encoder, discover_videos
 from imageio_ffmpeg import get_ffmpeg_exe
 
 CACHE_DIR = Path("cache")
@@ -70,29 +70,13 @@ def convert_to_mp4(input_path: str, output_path: str) -> str | None:
     return str(output_path) if (result is not None and result.returncode == 0) else None
 
 
-def _build_engine(model_config: dict, device: str = None) -> SearchEngine:
-    """Create a SearchEngine from a model config dict.
-
-    The config dict has keys: ``use_temporal``, ``temporal_checkpoint``,
-    ``bert_checkpoint``, ``model``, ``config_path``, ``stack_lora_cfg``.
-    """
-    use_temporal = model_config.get("use_temporal", False)
-    temporal_ckpt = model_config.get("temporal_checkpoint", None)
-    bert_ckpt = model_config.get("bert_checkpoint", None)
+def process_videos(folder_path: str, model_config: dict, device: str,
+                   progress=gr.Progress()):
+    """Process all videos or load from cache. Returns (engine_state, gallery, status)."""
     model = model_config.get("model", "clip")
+    bert_ckpt = model_config.get("bert_checkpoint", None)
     config_path = model_config.get("config_path", "config/default.yaml")
     stack_lora_cfg = model_config.get("stack_lora_cfg", None)
-
-    if use_temporal and temporal_ckpt and bert_ckpt:
-        pipeline = build_temporal_pipeline(
-            temporal_ckpt, bert_ckpt,
-            model=model,
-            stack_lora_cfg=stack_lora_cfg,
-            config_path=config_path,
-            device=device,
-        )
-        return SearchEngine(scene_encoder=pipeline.scene_encoder,
-                            text_encoder=pipeline.text_encoder)
 
     engine = SearchEngine(device=device)
     if bert_ckpt:
@@ -104,13 +88,6 @@ def _build_engine(model_config: dict, device: str = None) -> SearchEngine:
             device=device,
         )
         engine.text_encoder = text_enc
-    return engine
-
-
-def process_videos(folder_path: str, model_config: dict, device: str,
-                   progress=gr.Progress()):
-    """Process all videos or load from cache. Returns (engine_state, gallery, status)."""
-    engine = _build_engine(model_config, device=device)
 
     cache_path = model_config.get("cache_path")
     if cache_path:
@@ -225,23 +202,18 @@ def create_demo(device: str = None,
     _device = device
     _cache_path = cache_path
 
-    def _confirm_model(use_temporal: bool, temporal_checkpoint: str,
-                       bert_ckpt: str, mdl: str):
+    def _confirm_model(bert_ckpt: str, mdl: str):
         """Confirm model config and return (config_dict, display_name)."""
         resolved_bert = bert_ckpt or _bert_checkpoint
         resolved_model = mdl if mdl != "clip" else _model
         config = {
-            "use_temporal": use_temporal,
-            "temporal_checkpoint": temporal_checkpoint,
             "bert_checkpoint": resolved_bert,
             "model": resolved_model,
             "config_path": _config_path,
             "stack_lora_cfg": None,
             "cache_path": _cache_path,
         }
-        if use_temporal and temporal_checkpoint and resolved_bert:
-            name = f"Temporal + {resolved_model}"
-        elif resolved_bert:
+        if resolved_bert:
             name = f"{resolved_model} ({Path(resolved_bert).name})"
         else:
             name = "CLIP (默认)"
@@ -263,8 +235,6 @@ def create_demo(device: str = None,
 
         engine_state = gr.State()
         model_config_state = gr.State({
-            "use_temporal": False,
-            "temporal_checkpoint": "",
             "bert_checkpoint": _bert_checkpoint,
             "model": _model,
             "config_path": _config_path,
@@ -286,11 +256,6 @@ def create_demo(device: str = None,
                         choices=["clip", "bert-coco", "bert-stack-lora"],
                         value=_model,
                         label="Model Type",
-                    )
-                    use_temporal = gr.Checkbox(label="Enable Temporal Transformer", value=False)
-                    temporal_checkpoint = gr.Textbox(
-                        label="Temporal Checkpoint Path",
-                        placeholder="checkpoints/temporal_best.pt",
                     )
                     bert_checkpoint_box = gr.Textbox(
                         label="BERT Checkpoint Path",
@@ -337,14 +302,14 @@ def create_demo(device: str = None,
 
         gr.Markdown(
             "---\n"
-            "**How it works**: PySceneDetect splits each video into scenes → "
-            "CLIP ViT-B/32 encodes each scene and your text query → "
-            "cosine similarity ranks the scenes across all videos."
+            "**How it works**: Uniformly sampled frames from each video → "
+            "CLIP ViT-B/32 encodes and mean-pools into one video embedding → "
+            "cosine similarity ranks the videos against your text query."
         )
 
         confirm_model_btn.click(
             fn=_confirm_model,
-            inputs=[use_temporal, temporal_checkpoint, bert_checkpoint_box, model_dropdown],
+            inputs=[bert_checkpoint_box, model_dropdown],
             outputs=[model_config_state, model_status],
         )
 
@@ -374,7 +339,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", default="clip",
                         choices=["clip", "bert-coco", "bert-stack-lora"],
                         help="Text encoder model type (default: clip).")
-    parser.add_argument("--bert-checkpoint", default=None,
+    parser.add_argument("--bert-checkpoint", "-b", default=None,
                         help="Path to BERT checkpoint .pt file (required for bert-coco and bert-stack-lora).")
     parser.add_argument("--config", default="config/default.yaml",
                         help="Path to YAML config (for BERT model path and stack_lora parameters).")
