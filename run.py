@@ -1,21 +1,24 @@
 """
 CLIP Video Scene Search — CLI
 
-Accepts a pre-segmented scene directory (from scripts/segment_video.py) and
-searches with either CLIP's default text encoder or a trained BERT encoder.
+Accepts a pre-segmented scene directory (from ``scripts/segment_video.py``) or
+a folder of raw videos (with ``--folder-mode``) and searches with CLIP, COCO
+BERT, or Stack LoRA BERT.
 
 Usage:
-    # Segment once
-    python scripts/segment_video.py demo.mp4 -o ./segments
+    # Search with CLIP (folder mode — auto-segment)
+    python run.py ./videos --folder-mode --query "a person walking"
 
-    # Search with CLIP
-    python run.py ./segments/demo --query "a person walking"
+    # Search with COCO BERT (folder mode)
+    python run.py ./videos --folder-mode --model bert-coco \\
+        --bert-checkpoint checkpoints/bert_epoch26_t2i60.5.pt -q "dog"
 
-    # Search with BERT
-    python run.py ./segments/demo --query "car" --bert_checkpoint checkpoints/bert_epoch02_val1.5993.pt
+    # Search with Stack LoRA BERT (folder mode)
+    python run.py ./videos --folder-mode --model bert-stack-lora \\
+        --bert-checkpoint checkpoints/domain_adapted.pt -q "car"
 
-    # Change query without re-segmenting
-    python run.py ./segments/demo -q "dog" --top_k 3
+    # Legacy: load pre-segmented scene directory (no --folder-mode)
+    python run.py ./segments/demo -q "cat"
 """
 
 import argparse
@@ -28,12 +31,12 @@ import cv2
 import numpy as np
 import torch
 
-from clip_search import SearchEngine
+from clip_search import SearchEngine, load_text_encoder
 from clip_search.segmenter import Scene
 
 
 def load_scene_dir(scene_dir: str):
-    """Load pre-segmented scenes from a directory created by segment_video.py.
+    """Load pre-segmented scenes from a directory created by ``segment_video.py``.
 
     Returns a list of Scene objects.
     """
@@ -80,115 +83,81 @@ def save_thumbnail(path: str, frame: np.ndarray) -> None:
     cv2.imwrite(path, bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
 
-def load_bert_text_encoder(bert_checkpoint: str, config_path: str = "config/default.yaml",
-                            device: str = None) -> callable:
-    """Load a trained BertEncoder checkpoint and return a text encoding function."""
-    import yaml
-    from transformers import BertTokenizer
-    from src.models import BertEncoder
-
-    with open(config_path) as f:
-        cfg = yaml.safe_load(f)
-
-    if device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    bert_path = cfg["model"]["bert_model_path"]
-    print(f"Loading BERT from: {bert_path}")
-
-    # Check if checkpoint was trained with LoRA by peeking at its metadata
-    ckpt = torch.load(bert_checkpoint, map_location=device, weights_only=True)
-    lora_cfg = ckpt.get("lora_config", None)
-
-    model = BertEncoder(
-        model_path=bert_path,
-        embed_dim=cfg["model"]["embed_dim"],
-        lora_cfg=lora_cfg,
-    ).to(device)
-
-    model.load_state_dict(ckpt["model_state_dict"])
-    model.eval()
-
-    tokenizer = BertTokenizer.from_pretrained(bert_path, local_files_only=True)
-
-    @torch.no_grad()
-    def encode_text(text: str) -> np.ndarray:
-        tokens = tokenizer([text], padding=True, truncation=True, max_length=77, return_tensors="pt")
-        input_ids = tokens["input_ids"].to(device)
-        attention_mask = tokens["attention_mask"].to(device)
-        emb = model(input_ids, attention_mask)
-        return emb.cpu().numpy().flatten().astype(np.float32)
-
-    return encode_text
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="Search video scenes with CLIP or BERT text encoder."
     )
     parser.add_argument("scene_dir", help="Path to pre-segmented scene directory "
-                                          "(e.g. ./segments/demo)")
+                                          "(e.g. ./segments/demo) or, with --folder-mode, "
+                                          "a folder of raw videos.")
     parser.add_argument("--query", "-q", required=True, help="Text query to search for")
     parser.add_argument("--top_k", "-k", type=int, default=5,
                         help="Number of top scenes to show (default: 5)")
     parser.add_argument("--output", "-o", default="output",
                         help="Directory to save result thumbnails (default: output/)")
+    parser.add_argument("--folder-mode", action="store_true",
+                        help="Treat scene_dir as a folder of raw videos to auto-segment "
+                             "(instead of a pre-segmented scene directory).")
+    parser.add_argument("--model", default="clip",
+                        choices=["clip", "bert-coco", "bert-stack-lora"],
+                        help="Text encoder model type (default: clip).")
     parser.add_argument("--bert_checkpoint", "-b", default=None,
-                        help="Path to trained BERT checkpoint .pt file. "
-                             "If not set, uses CLIP's default text encoder.")
-    parser.add_argument("--temporal_checkpoint", "-t", default=None,
-                        help="Path to trained temporal-transformer checkpoint .pt file. "
-                             "Requires --bert_checkpoint also. Enables the temporal "
-                             "transformer for scene encoding (overrides --bert_checkpoint).")
+                        help="Path to BERT checkpoint .pt file. "
+                             "Required when --model is bert-coco or bert-stack-lora.")
     parser.add_argument("--config", default="config/default.yaml",
-                        help="Config file for BERT model path (default: config/default.yaml)")
+                        help="Config file for BERT model path and stack_lora parameters "
+                             "(default: config/default.yaml).")
     parser.add_argument("--device", default=None,
                         help="Device to run on: 'cpu' or 'cuda'. Default: auto-detect.")
     args = parser.parse_args()
 
-    # ── Step 1: load pre-segmented scenes ──────────────────
-    print(f"Loading scenes from: {args.scene_dir}")
-    scenes = load_scene_dir(args.scene_dir)
-    print(f"  → {len(scenes)} scenes loaded")
+    # ── Validation ───────────────────────────────────────────────
+    if args.model in ("bert-coco", "bert-stack-lora") and not args.bert_checkpoint:
+        parser.error(f"--bert-checkpoint is required when --model={args.model}")
 
-    if not scenes:
-        print("No scenes found.")
-        sys.exit(0)
+    engine = SearchEngine(device=args.device)
 
-    # ── Step 2: encode scenes ──────────────────────────────
-    print("Loading CLIP encoder (vision)...")
+    # ── Step 1: load scenes ──────────────────────────────────────
+    if args.folder_mode:
+        print(f"Folder mode — processing videos from: {args.scene_dir}")
+        engine.process_folder(args.scene_dir)
+        if not engine.scenes:
+            print("No scenes found in any video.")
+            sys.exit(0)
+    else:
+        print(f"Loading scenes from: {args.scene_dir}")
+        scenes = load_scene_dir(args.scene_dir)
+        print(f"  → {len(scenes)} scenes loaded")
+        if not scenes:
+            print("No scenes found.")
+            sys.exit(0)
 
-    if args.temporal_checkpoint:
-        from clip_search import build_temporal_pipeline
-        pipeline = build_temporal_pipeline(
-            args.temporal_checkpoint, args.bert_checkpoint,
-            config_path=args.config, device=args.device,
+        # Encode scenes manually (legacy path)
+        print("Loading CLIP encoder (vision)...")
+        engine.scenes = scenes
+        scene_embs = []
+        for scene in scenes:
+            emb = (engine.scene_encoder(scene.frames)
+                   if engine.scene_encoder
+                   else engine.encoder.encode_scene(scene.frames))
+            scene_embs.append(emb)
+        engine.scene_embs = np.stack(scene_embs)
+
+        # Set up video_map for clip extraction (legacy: one video per run)
+        engine.video_map[scenes[0].video_id] = str(Path(args.scene_dir).resolve())
+
+    # ── Step 2: set up text encoder ──────────────────────────────
+    if args.model != "clip":
+        text_enc = load_text_encoder(
+            model=args.model,
+            bert_checkpoint=args.bert_checkpoint,
+            config_path=args.config,
+            device=args.device,
         )
-        engine = SearchEngine(scene_encoder=pipeline.scene_encoder,
-                              text_encoder=pipeline.text_encoder)
-    else:
-        device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
-        engine = SearchEngine(device=device)
-        if args.bert_checkpoint:
-            text_encoder = load_bert_text_encoder(args.bert_checkpoint, args.config,
-                                                   device=args.device)
-            engine.text_encoder = text_encoder
+        engine.text_encoder = text_enc
 
-    # Encode all scenes
-    engine.scenes = scenes
-    scene_embs = []
-    for scene in scenes:
-        emb = engine.scene_encoder(scene.frames) if engine.scene_encoder else engine.encoder.encode_scene(scene.frames)
-        scene_embs.append(emb)
-    engine.scene_embs = np.stack(scene_embs)
-
-    # ── Step 3: search ─────────────────────────────────────
-    if args.temporal_checkpoint:
-        encoder_name = "Temporal+BERT"
-    elif args.bert_checkpoint:
-        encoder_name = "BERT"
-    else:
-        encoder_name = "CLIP"
+    # ── Step 3: search ───────────────────────────────────────────
+    encoder_name = args.model.upper()
     print(f'\nSearching for: "{args.query}"  (encoder: {encoder_name})')
     results = engine.search(args.query, top_k=args.top_k)
 
@@ -196,28 +165,29 @@ def main():
         print("No matching scenes found.")
         sys.exit(0)
 
-    # ── Step 4: display results ────────────────────────────
+    # ── Step 4: display results ──────────────────────────────────
     print(f"\nTop {len(results)} results:")
-    print("-" * 72)
-    print(f"  {'Rank':<6} {'Scene':<6} {'Time range':<22} {'Score':<10}  Thumbnail")
-    print("-" * 72)
+    print("-" * 88)
+    print(f"  {'Rank':<6} {'Video':<14} {'Scene':<6} {'Time range':<22} {'Score':<10}  Thumbnail")
+    print("-" * 88)
 
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     for rank, r in enumerate(results, 1):
         time_range = f"{r['start_sec']:.1f}s → {r['end_sec']:.1f}s"
-        thumb_name = f"rank{rank:02d}_scene{r['scene_idx']:03d}.jpg"
+        thumb_name = f"rank{rank:02d}_{r['video_id']}_scene{r['scene_idx']:03d}.jpg"
         thumb_path = str(out_dir / thumb_name)
 
         save_thumbnail(thumb_path, r["thumbnail"])
 
-        print(f"  {rank:<6} {r['scene_idx']:<6} {time_range:<22} {r['score']:.4f}    {thumb_path}")
+        print(f"  {rank:<6} {r['video_id']:<14} {r['scene_idx']:<6} "
+              f"{time_range:<22} {r['score']:.4f}    {thumb_path}")
 
-    print("-" * 72)
+    print("-" * 88)
 
     best = results[0]
-    print(f'\nBest match: Scene {best["scene_idx"]} '
+    print(f'\nBest match: [{best["video_id"]}] Scene {best["scene_idx"]} '
           f'({best["start_sec"]:.1f}s → {best["end_sec"]:.1f}s), '
           f'score={best["score"]:.4f}')
     print(f"Thumbnails saved to: {out_dir.resolve()}")
