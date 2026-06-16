@@ -32,7 +32,7 @@ def main():
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    engine = SearchEngine(device=args.device, uniform_sample=True)
+    engine = SearchEngine(device=args.device)
     engine.process_folder(args.video_dir)
 
     if not engine.scenes:
