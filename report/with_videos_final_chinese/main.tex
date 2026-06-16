@@ -5,6 +5,7 @@
 \usepackage{amsmath,amssymb,amsthm}
 \usepackage{xcolor,hyperref,paralist,titlesec,fancyhdr,etoolbox}
 \usepackage[numbers,sort&compress]{natbib}
+\usepackage{flafter}
 \usepackage{geometry}
 
 \geometry{left=2.5cm,right=2.5cm,top=2.5cm,bottom=2.5cm}
@@ -29,15 +30,15 @@
 \title{基于参数高效BERT适配的零样本文本-视频检索 \\
 \large --- Eureka-from-CLIP 课程设计报告}
 
-\author{张思远$^{*\dagger}$\quad 程雅迪$^{\dagger}$\\[4pt]
+\author{张思远$^{\dagger}$\quad 程亚迪$^{\dagger}$\\[4pt]
   \small 浙江工业大学\\
   \small\texttt{\{zhangsiyuan,chengyadi\}@zjut.edu.cn}}
 
 \maketitle
 
 \let\thefootnote\relax
-\footnotetext{$^{*}$通讯作者。}
-\footnotetext{$^{\dagger}$同等贡献。}
+\footnotetext{$^{\dagger}$这些作者对本工作有同等贡献。张思远负责了方法设计、实验实施和结果分析；程亚迪提出了文本 - 视频检索的主题思想，负责了前、后端代码构建和测试。}
+\footnotetext{本工作使用了生成式大语言模型进行辅助构建。具体而言，使用 Claude Code \citep{claudecode2025} 编码代理配合DeepSeek-V4 \citep{deepseekv4}大模型辅助代码编写、调试与文档撰写；使用 HY-MT1.5-1.8B \citep{hymt152025tencent}翻译模型将 Flickr30k 英文描述翻译为中文，用于零样本跨语言检索能力验证。所有由生成式人工智能产出的内容均经过人工全面审查与修订，以确保其准确性、严谨性，并杜绝因模型幻觉导致的学术不端行为。}
 
 \begin{abstract}
 本文介绍Eureka-from-CLIP，一个在受限资源下将CLIP的固定文本编码器替换为轻量级BERT编码器的零样本文本-视频检索框架。通过参数高效的跨模态对齐，我们首先在COCO Captions上使用仅1.35M可训练的LoRA参数将BERT适配到CLIP的冻结视觉空间，在Flickr30k文本-图像检索中超越CLIP原生文本编码器（60.48\%对比57.90\%）。随后，我们通过Stack LoRA进行视频领域适配：冻结COCO训练的适配器，在MSR-VTT上叠加一个更小的秩为2的Stack（0.63M可训练参数）。最终模型在MSVD零样本视频检索中超过CLIP（28.13\%对比27.01\% t2i R@1），而适配训练开销仅为完整微调的一小部分。我们的非对称队列设计通过遮蔽过时的文本嵌入同时保留新鲜的图像队列，弥补了受限GPU内存下小批量大小的不足。本工作为在有限计算资源下用任意BERT变体替换CLIP文本编码器提供了一种实用方案，适用于图像和视频检索，并可通过BERT的多语言变体自然地扩展到多语言场景。
@@ -49,11 +50,13 @@
 
 CLIP \citep{radford2021clip}已成为零样本文本-视频检索的事实标准骨干网络：逐帧的CLIP视觉嵌入经过均值池化得到视频表示，然后与CLIP文本编码器进行对比以实现检索 \citep{luo2022clip4clip}。然而，CLIP的文本编码器是一个固定组件——它无法被轻松替换或扩展以支持多语言查询、领域特定词汇或更强大的语言模型。将其替换为BERT \citep{devlin2019bert}等替代编码器可以解锁这些能力，但这需要在计算资源有限的情况下将新编码器重新对齐到CLIP的冻结视觉空间，这是一个非平凡的任务。
 
+在实际应用场景中，用户往往已经拥有针对特定领域或语言微调过的BERT模型——例如经过法律、医学等垂直领域语料继续训练的领域BERT，或针对中文、阿拉伯语等语言优化的多语言BERT变体。这些定制模型承载了宝贵的领域知识，但由于缺乏与视觉表示的跨模态对齐，无法直接用于文本-视频检索。将其重新对齐到CLIP的冻结视觉空间是解锁这些检索能力的关键，但传统的完整微调需要大量计算资源和成对的图像-文本数据。因此，如何将已有的定制语言模型高效、轻量地适配到CLIP的视觉检索空间中，是一个具有明确实际意义的问题。
+
 本研究作为Python应用开发基础课程设计，着力解决在单张8\,GB GPU上替换CLIP文本编码器的问题。我们的核心洞察是：对齐过程可以分解为两个轻量级阶段——首先在具有丰富标注的图像数据上将BERT适配到CLIP的视觉空间，然后高效地将对齐后的编码器迁移到视频领域，同时最小化对原始对齐的遗忘。
 
 我们采用LoRA \citep{hu2022lora}进行参数高效适配，仅训练插入BERT Transformer层的低秩适配器，同时保持所有预训练权重冻结。为弥补有限GPU内存下的小批量大小限制，我们使用基于队列的对比学习目标 \citep{he2020moco}。然而，仅训练文本编码器会产生一个陈旧性问题：随着文本编码器的更新，队列中存储的文本嵌入变得过时。我们提出一种非对称队列设计来应对：遮蔽过时的文本嵌入，同时保留完整的新鲜图像队列——这些图像嵌入来自冻结的CLIP视觉编码器，因此始终是新鲜的。
 
-我们的两阶段方法如下。第一阶段（图像对齐）：在COCO Captions上使用LoRA（r=8，1.35M可训练参数）训练BERT，使其与CLIP冻结的图像嵌入对齐，在Flickr30k上达到60.48\%的文本-图像R@1——超越了CLIP原生文本编码器的57.90\%。第二阶段（视频领域适配）：通过Stack LoRA将COCO对齐的BERT适配到MSR-VTT视频字幕：通过权重合并冻结COCO训练的适配器，并叠加一个更小的秩为2的适配器（0.63M可训练参数），仅学习领域偏移。最终模型在MSVD零样本视频检索中达到28.13\% t2i R@1，超过CLIP基线27.01\%。
+我们的两阶段方法如下。第一阶段（图像对齐）：在COCO Captions \citep{lin2014coco}上使用LoRA（r=8，1.35M可训练参数）训练BERT，使其与CLIP冻结的图像嵌入对齐，在Flickr30k上达到60.48\%的文本-图像R@1——超越了CLIP原生文本编码器的57.90\%。第二阶段（视频领域适配）：通过Stack LoRA将COCO对齐的BERT适配到MSR-VTT视频字幕：通过权重合并冻结COCO训练的适配器，并叠加一个更小的秩为2的适配器（0.63M可训练参数），仅学习领域偏移。最终模型在MSVD零样本视频检索中达到28.13\% t2i R@1，超过CLIP基线27.01\%。
 
 本文的主要贡献如下：
 
@@ -193,7 +196,7 @@ $\mathbf{I}_{\text{batch}} \mathbf{T}_{\text{batch}}^{\top}$ & $\mathbf{T}_{\tex
 
 \textbf{MSVD} \citep{chen2011collecting}是一个视频检索基准，包含来自YouTube的1,970个视频，每个视频约有20个人工标注描述。按照零样本协议，我们在标准的670视频测试集上评估，不在MSVD上进行任何训练。视频表示通过均值池化12个均匀采样的CLIP逐帧关键帧嵌入得到，遵循CLIP4Clip \citep{luo2022clip4clip}验证的简单而有效的池化策略。
 
-\textbf{Flickr30k} \citep{plummer2015flickr30k}是一个图像检索基准，包含31,783张图像，每张有5条描述。我们使用标准的1,000张图像测试集进行零样本评估。
+\textbf{Flickr30k} \citep{young2014flickr30k}是一个图像检索基准，包含31,783张图像，每张有5条描述。我们使用标准的1,000张图像测试集进行零样本评估。
 
 对于两个基准上的CLIP基线，我们使用官方OpenAI ViT-B/32模型。在视觉侧，这与我们BERT训练期间使用的冻结编码器相同。在文本侧，我们使用CLIP的原生Transformer文本编码器。
 
@@ -433,10 +436,10 @@ A.~van den Oord, Y.~Li, and O.~Vinyals.
 \newblock Representation learning with contrastive predictive coding.
 \newblock \textit{arXiv preprint arXiv:1807.03748}, 2018.
 
-\bibitem[Plummer et al.(2015)Plummer, Wang, Cervantes, Caicedo, Hockenmaier, and Lazebnik]{plummer2015flickr30k}
-B.~A.~Plummer, L.~Wang, C.~M.~Cervantes, J.~C.~Caicedo, J.~Hockenmaier, and S.~Lazebnik.
-\newblock Flickr30k entities: Collecting region-to-phrase correspondences for richer image-to-sentence models.
-\newblock In \textit{ICCV}, 2015.
+\bibitem[Young et al.(2014)Young, Lai, Hodosh, and Hockenmaier]{young2014flickr30k}
+P.~Young, A.~Lai, M.~Hodosh, and J.~Hockenmaier.
+\newblock From image descriptions to visual denotations: New similarity metrics for semantic inference over event descriptions.
+\newblock \textit{Transactions of the Association for Computational Linguistics}, 2:67--78, 2014.
 
 \bibitem[Lin et al.(2014)Lin, Maire, Belongie, Hays, Perona, Ramanan, Dollár, and Zitnick]{lin2014coco}
 T.-Y.~Lin, M.~Maire, S.~Belongie, J.~Hays, P.~Perona, D.~Ramanan, P.~Dollár, and C.~L.~Zitnick.
@@ -512,6 +515,17 @@ Y.~Liu, P.~Xiong, L.~Xu, S.~Cao, and Q.~Jin.
 D.~Chen and W.~Dolan.
 \newblock Collecting highly parallel data for paraphrase evaluation.
 \newblock In \textit{ACL}, 2011.
+
+\bibitem[Chatlatanagulchai et al.(2025)Chatlatanagulchai, Thonglek, Reid, Kashiwa, Leelaprute, Rungsawang, Manaskasemsak, and Iida]{claudecode2025}
+K.~Chatlatanagulchai, K.~Thonglek, I.~Reid, K.~Kashiwa, P.~Leelaprute, A.~Rungsawang, B.~Manaskasemsak, and H.~Iida.
+\newblock On the use of agentic coding manifests: An empirical study of Claude Code.
+\newblock \textit{arXiv preprint arXiv:2509.14744}, 2025.
+
+\bibitem[DeepSeek-AI(2026)]{deepseekv4}
+DeepSeek-AI.
+\newblock DeepSeek-V4: Towards highly efficient million-token context intelligence.
+\newblock Technical report, 2026.
+\newblock Available at \url{https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro}.
 
 \end{thebibliography}
 
