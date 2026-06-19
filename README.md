@@ -220,27 +220,19 @@ python scripts/evaluate_multilingual.py \
 
 ## Inference
 
-### 1. Segment a Video
+### Search
+
+**CLIP** (default, mean-pool + CLIP text encoder):
 
 ```bash
-python scripts/segment_video.py demo.mp4 -o ./segments
-```
-
-Saves scene thumbnails, frames, and `metadata.json` to `./segments/demo/`.
-
-### 2. Search
-
-**Legacy mode** (CLIP mean-pool + CLIP text encoder):
-
-```bash
-python run.py ./segments/demo --query "a person walking"
+python run.py ./videos --query "a person walking"
 ```
 
 **BERT** (trained text encoder):
 
 ```bash
-python run.py ./segments/demo --query "a person walking" \
-    --bert_checkpoint checkpoints/bert_epoch02_val1.5993.pt
+python run.py ./videos --query "a person walking" \
+    --model bert-coco --bert_checkpoint checkpoints/bert_epoch02_val1.5993.pt
 ```
 
 ### Gradio Web UI
@@ -250,7 +242,7 @@ python app.py
 ```
 
 Opens a browser UI with two tabs:
-1. **Process Video** — upload a video, detect scenes, extract frame embeddings
+1. **Process Videos** — select a folder of videos, extract frame embeddings
 2. **Search Scenes** — query indexed scenes, view ranked results with thumbnails
 
 ---
@@ -287,7 +279,6 @@ Opens a browser UI with two tabs:
 │   ├── evaluate_checkpoint.py        # Evaluate trained checkpoint on COCO + Flickr
 │   ├── evaluate_clip_text_encoder.py # CLIP zero-shot baseline on Flickr30k
 │   ├── evaluate_multilingual.py      # Bilingual Flickr30k eval
-│   ├── segment_video.py              # CLI: video → scene segmentation
 │   ├── download_openai_clip.py       # Download OpenAI CLIP via modelscope + HF conversion
 │   └── convert_hf_to_openclip.py     # Convert HF Transformers CLIP → open_clip safetensors
 ├── config/

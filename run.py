@@ -1,80 +1,30 @@
 """
 CLIP Video Scene Search — CLI
 
-Accepts a pre-segmented scene directory (from ``scripts/segment_video.py``) or
-a folder of raw videos (with ``--folder-mode``) and searches with CLIP, COCO
-BERT, or Stack LoRA BERT.
+Accepts a folder of raw videos, uniformly samples frames per video, mean-pools
+CLIP embeddings, and searches with CLIP, COCO BERT, or Stack LoRA BERT.
 
 Usage:
-    # Search with CLIP (folder mode — auto-segment)
-    python run.py ./videos --folder-mode --query "a person walking"
+    # Search with CLIP (default)
+    python run.py ./videos --query "a person walking"
 
-    # Search with COCO BERT (folder mode)
-    python run.py ./videos --folder-mode --model bert-coco \\
+    # Search with COCO BERT
+    python run.py ./videos --model bert-coco \
         --bert-checkpoint checkpoints/bert_epoch26_t2i60.5.pt -q "dog"
 
-    # Search with Stack LoRA BERT (folder mode)
-    python run.py ./videos --folder-mode --model bert-stack-lora \\
+    # Search with Stack LoRA BERT
+    python run.py ./videos --model bert-stack-lora \
         --bert-checkpoint checkpoints/domain_adapted.pt -q "car"
-
-    # Legacy: load pre-segmented scene directory (no --folder-mode)
-    python run.py ./segments/demo -q "cat"
 """
 
 import argparse
-import json
-import os
 import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
-import torch
 
 from clip_search import SearchEngine, load_text_encoder
-from clip_search.segmenter import Scene
-
-
-def load_scene_dir(scene_dir: str):
-    """Load pre-segmented scenes from a directory created by ``segment_video.py``.
-
-    Returns a list of Scene objects.
-    """
-    scene_dir = Path(scene_dir)
-    meta_path = scene_dir / "metadata.json"
-
-    if not meta_path.exists():
-        print(f"Error: metadata not found in {scene_dir}")
-        print("Run scripts/segment_video.py first to create the scene directory.")
-        sys.exit(1)
-
-    with open(meta_path) as f:
-        metadata = json.load(f)
-
-    video_id = scene_dir.stem
-    scenes = []
-
-    for info in metadata:
-        sid = info["scene_idx"]
-        scene_path = scene_dir / f"scene_{sid:03d}"
-
-        frames = []
-        for i in range(info["num_frames"]):
-            frame_path = scene_path / f"frame_{i:03d}.jpg"
-            if frame_path.exists():
-                img = cv2.imread(str(frame_path))
-                if img is not None:
-                    frames.append(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-
-        scenes.append(Scene(
-            video_id=video_id,
-            scene_idx=sid,
-            start_sec=info["start_sec"],
-            end_sec=info["end_sec"],
-            frames=frames,
-        ))
-
-    return scenes
 
 
 def save_thumbnail(path: str, frame: np.ndarray) -> None:
@@ -85,19 +35,14 @@ def save_thumbnail(path: str, frame: np.ndarray) -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Search video scenes with CLIP or BERT text encoder."
+        description="Search videos with CLIP or BERT text encoder."
     )
-    parser.add_argument("scene_dir", help="Path to pre-segmented scene directory "
-                                          "(e.g. ./segments/demo) or, with --folder-mode, "
-                                          "a folder of raw videos.")
+    parser.add_argument("video_folder", help="Path to a folder of video files")
     parser.add_argument("--query", "-q", required=True, help="Text query to search for")
     parser.add_argument("--top_k", "-k", type=int, default=5,
-                        help="Number of top scenes to show (default: 5)")
+                        help="Number of top results to show (default: 5)")
     parser.add_argument("--output", "-o", default="output",
                         help="Directory to save result thumbnails (default: output/)")
-    parser.add_argument("--folder-mode", action="store_true",
-                        help="Treat scene_dir as a folder of raw videos to auto-segment "
-                             "(instead of a pre-segmented scene directory).")
     parser.add_argument("--model", default="clip",
                         choices=["clip", "bert-coco", "bert-stack-lora"],
                         help="Text encoder model type (default: clip).")
@@ -117,34 +62,12 @@ def main():
 
     engine = SearchEngine(device=args.device)
 
-    # ── Step 1: load scenes ──────────────────────────────────────
-    if args.folder_mode:
-        print(f"Folder mode — processing videos from: {args.scene_dir}")
-        engine.process_folder(args.scene_dir)
-        if not engine.scenes:
-            print("No scenes found in any video.")
-            sys.exit(0)
-    else:
-        print(f"Loading scenes from: {args.scene_dir}")
-        scenes = load_scene_dir(args.scene_dir)
-        print(f"  → {len(scenes)} scenes loaded")
-        if not scenes:
-            print("No scenes found.")
-            sys.exit(0)
-
-        # Encode scenes manually (legacy path)
-        print("Loading CLIP encoder (vision)...")
-        engine.scenes = scenes
-        scene_embs = []
-        for scene in scenes:
-            emb = (engine.scene_encoder(scene.frames)
-                   if engine.scene_encoder
-                   else engine.encoder.encode_scene(scene.frames))
-            scene_embs.append(emb)
-        engine.scene_embs = np.stack(scene_embs)
-
-        # Set up video_map for clip extraction (legacy: one video per run)
-        engine.video_map[scenes[0].video_id] = str(Path(args.scene_dir).resolve())
+    # ── Step 1: process all videos in folder ─────────────────────
+    print(f"Processing videos from: {args.video_folder}")
+    engine.process_folder(args.video_folder)
+    if not engine.scenes:
+        print("No scenes found in any video.")
+        sys.exit(0)
 
     # ── Step 2: set up text encoder ──────────────────────────────
     if args.model != "clip":
