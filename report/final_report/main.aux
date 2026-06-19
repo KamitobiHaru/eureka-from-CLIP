@@ -4,16 +4,11 @@
 \citation{claudecode2025}
 \citation{deepseekv4}
 \citation{hymt152025tencent}
-\HyPL@Entry{0<</S/D>>}
-\@writefile{toc}{\contentsline {section}{\numberline {一、}主题描述}{1}{section.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {二、}设计目的}{2}{section.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {三、}功能}{2}{section.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {四、}方法/框架概要}{2}{section.4}\protected@file@percent }
 \citation{radford2021clip}
 \citation{luo2022clip4clip}
 \citation{devlin2019bert}
-\@writefile{toc}{\contentsline {section}{\numberline {五、}特色}{3}{section.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {六、}引言}{3}{section.6}\protected@file@percent }
+\HyPL@Entry{0<</S/D>>}
+\@writefile{toc}{\contentsline {section}{\numberline {一、}引言}{1}{section.1}\protected@file@percent }
 \citation{hu2022lora}
 \citation{he2020moco}
 \citation{lin2014coco}
@@ -23,82 +18,85 @@
 \citation{gorti2022xpool}
 \citation{liu2022ts2net}
 \citation{huang2023vop}
+\@writefile{toc}{\contentsline {section}{\numberline {二、}相关工作}{2}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}文本-视频检索}{2}{subsection.2.1}\protected@file@percent }
 \citation{zhai2022lit}
 \citation{chen2022altclip}
 \citation{yang2022chinese}
-\@writefile{toc}{\contentsline {section}{\numberline {七、}相关工作}{4}{section.7}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {7.1}文本-视频检索}{4}{subsection.7.1}\protected@file@percent }
 \citation{hu2022lora}
 \citation{huang2023vop}
 \citation{cao2024acl}
 \citation{he2020moco}
 \citation{luo2022clip4clip}
-\@writefile{toc}{\contentsline {subsection}{\numberline {7.2}替换CLIP文本编码器}{5}{subsection.7.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {7.3}参数高效跨模态适配}{5}{subsection.7.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {7.4}基于队列的对比学习}{5}{subsection.7.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {八、}方法}{5}{section.8}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {8.1}两阶段训练流程}{5}{subsection.8.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}替换CLIP文本编码器}{3}{subsection.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}参数高效跨模态适配}{3}{subsection.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.4}基于队列的对比学习}{3}{subsection.2.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {三、}方法}{3}{section.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}两阶段训练流程}{3}{subsection.3.1}\protected@file@percent }
 \citation{hu2022lora}
 \citation{oord2018representation}
-\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Eureka-from-CLIP训练流程。冻结的CLIP视觉编码器预计算视频帧或图像嵌入（永不过时）。可训练的BERT文本编码器配合LoRA产生文本嵌入。图像队列为文本-图像学习提供丰富的负样本，而过时的文本队列则被遮蔽。}}{6}{figure.1}\protected@file@percent }
-\newlabel{fig:pipeline}{{1}{6}{Eureka-from-CLIP训练流程。冻结的CLIP视觉编码器预计算视频帧或图像嵌入（永不过时）。可训练的BERT文本编码器配合LoRA产生文本嵌入。图像队列为文本-图像学习提供丰富的负样本，而过时的文本队列则被遮蔽。}{figure.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {8.2}模型架构}{6}{subsection.8.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {8.3}损失函数设计}{6}{subsection.8.3}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Eureka-from-CLIP训练流程。冻结的CLIP视觉编码器预计算视频帧或图像嵌入（永不过时）。可训练的BERT文本编码器配合LoRA产生文本嵌入。图像队列为文本-图像学习提供丰富的负样本，而过时的文本队列则被遮蔽。}}{4}{figure.1}\protected@file@percent }
+\newlabel{fig:pipeline}{{1}{4}{Eureka-from-CLIP训练流程。冻结的CLIP视觉编码器预计算视频帧或图像嵌入（永不过时）。可训练的BERT文本编码器配合LoRA产生文本嵌入。图像队列为文本-图像学习提供丰富的负样本，而过时的文本队列则被遮蔽。}{figure.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}模型架构}{4}{subsection.3.2}\protected@file@percent }
 \citation{he2020moco}
-\newlabel{eq:asymmetric_loss}{{1}{7}{损失函数设计}{equation.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {8.4}带文本过时遮蔽的队列设计}{7}{subsection.8.4}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces 用于文本过时感知对比学习的非对称队列设计。}}{7}{table.1}\protected@file@percent }
-\newlabel{tab:queue}{{1}{7}{用于文本过时感知对比学习的非对称队列设计。}{table.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {8.5}训练细节}{7}{subsection.8.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}损失函数设计}{5}{subsection.3.3}\protected@file@percent }
+\newlabel{eq:asymmetric_loss}{{1}{5}{损失函数设计}{equation.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}带文本过时遮蔽的队列设计}{5}{subsection.3.4}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces 用于文本过时感知对比学习的非对称队列设计。}}{5}{table.1}\protected@file@percent }
+\newlabel{tab:queue}{{1}{5}{用于文本过时感知对比学习的非对称队列设计。}{table.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.5}训练细节}{5}{subsection.3.5}\protected@file@percent }
 \citation{chen2011collecting}
 \citation{luo2022clip4clip}
 \citation{young2014flickr30k}
-\@writefile{toc}{\contentsline {section}{\numberline {九、}实验}{8}{section.9}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {9.1}评估设置}{8}{subsection.9.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {9.2}主要结果}{8}{subsection.9.2}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces MSVD上零样本文本-视频检索结果。所有方法使用相同的冻结CLIP ViT-B/32视觉编码器，采用均值池化的帧嵌入。}}{9}{table.2}\protected@file@percent }
-\newlabel{tab:video_results}{{2}{9}{MSVD上零样本文本-视频检索结果。所有方法使用相同的冻结CLIP ViT-B/32视觉编码器，采用均值池化的帧嵌入。}{table.2}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Flickr30k测试集（1K图像）上的零样本图像检索结果。第一阶段结果是任何视频适配前COCO训练模型的性能。}}{9}{table.3}\protected@file@percent }
-\newlabel{tab:flickr_results}{{3}{9}{Flickr30k测试集（1K图像）上的零样本图像检索结果。第一阶段结果是任何视频适配前COCO训练模型的性能。}{table.3}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {9.3}消融实验：非对称损失和队列设计的影响}{9}{subsection.9.3}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces 框架中各队列组件的消融实验。}}{9}{table.4}\protected@file@percent }
-\newlabel{tab:ablation}{{4}{9}{框架中各队列组件的消融实验。}{table.4}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces 非对称损失权重$\alpha $对检索性能的影响。}}{10}{table.5}\protected@file@percent }
-\newlabel{tab:alpha}{{5}{10}{非对称损失权重$\alpha $对检索性能的影响。}{table.5}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {9.4}参数消融：参数分布（LoRA对比MLP投影）}{10}{subsection.9.4}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces 消融实验：LoRA对比MLP投影（可训练参数数量相当）。两种模型均在COCO上训练，在Flickr30k上进行零样本评估。}}{10}{table.6}\protected@file@percent }
-\newlabel{tab:ablation_mlp}{{6}{10}{消融实验：LoRA对比MLP投影（可训练参数数量相当）。两种模型均在COCO上训练，在Flickr30k上进行零样本评估。}{table.6}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {十、}讨论}{10}{section.10}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {10.1}队列非对称性主导检索优化}{10}{subsection.10.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {10.2}为什么损失重加权不如预期重要？}{11}{subsection.10.2}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces   训练期间原始（未加权）文本-图像损失与图像-文本损失的比值$L_{t2i}/L_{i2t}$（$\alpha {=}0.75$）。尽管存在偏向t2i的显式优化偏差，该比率从第一个周期的约3.3倍上升到收敛时的超过13.5倍，均值为$11.86$倍（虚线）。这一不断扩大的差距表明队列引发的非对称性主导了损失重加权的效果。 }}{11}{figure.2}\protected@file@percent }
-\newlabel{fig:loss_ratio}{{2}{11}{训练期间原始（未加权）文本-图像损失与图像-文本损失的比值$L_{t2i}/L_{i2t}$（$\alpha {=}0.75$）。尽管存在偏向t2i的显式优化偏差，该比率从第一个周期的约3.3倍上升到收敛时的超过13.5倍，均值为$11.86$倍（虚线）。这一不断扩大的差距表明队列引发的非对称性主导了损失重加权的效果。}{figure.2}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {10.3}资源约束自然导致非对称设计}{11}{subsection.10.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {10.4}Stack LoRA实现高效领域迁移}{11}{subsection.10.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {四、}实验}{6}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}评估设置}{6}{subsection.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}主要结果}{7}{subsection.4.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces MSVD上零样本文本-视频检索结果。所有方法使用相同的冻结CLIP ViT-B/32视觉编码器，采用均值池化的帧嵌入。}}{7}{table.2}\protected@file@percent }
+\newlabel{tab:video_results}{{2}{7}{MSVD上零样本文本-视频检索结果。所有方法使用相同的冻结CLIP ViT-B/32视觉编码器，采用均值池化的帧嵌入。}{table.2}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Flickr30k测试集（1K图像）上的零样本图像检索结果。第一阶段结果是任何视频适配前COCO训练模型的性能。}}{7}{table.3}\protected@file@percent }
+\newlabel{tab:flickr_results}{{3}{7}{Flickr30k测试集（1K图像）上的零样本图像检索结果。第一阶段结果是任何视频适配前COCO训练模型的性能。}{table.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}消融实验：非对称损失和队列设计的影响}{7}{subsection.4.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces 框架中各队列组件的消融实验。}}{8}{table.4}\protected@file@percent }
+\newlabel{tab:ablation}{{4}{8}{框架中各队列组件的消融实验。}{table.4}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces 非对称损失权重$\alpha $对检索性能的影响。}}{8}{table.5}\protected@file@percent }
+\newlabel{tab:alpha}{{5}{8}{非对称损失权重$\alpha $对检索性能的影响。}{table.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}参数消融：参数分布（LoRA对比MLP投影）}{8}{subsection.4.4}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces 消融实验：LoRA对比MLP投影（可训练参数数量相当）。两种模型均在COCO上训练，在Flickr30k上进行零样本评估。}}{8}{table.6}\protected@file@percent }
+\newlabel{tab:ablation_mlp}{{6}{8}{消融实验：LoRA对比MLP投影（可训练参数数量相当）。两种模型均在COCO上训练，在Flickr30k上进行零样本评估。}{table.6}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {五、}讨论}{9}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}队列非对称性主导检索优化}{9}{subsection.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}为什么损失重加权不如预期重要？}{9}{subsection.5.2}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces   训练期间原始（未加权）文本-图像损失与图像-文本损失的比值$L_{t2i}/L_{i2t}$（$\alpha {=}0.75$）。尽管存在偏向t2i的显式优化偏差，该比率从第一个周期的约3.3倍上升到收敛时的超过13.5倍，均值为$11.86$倍（虚线）。这一不断扩大的差距表明队列引发的非对称性主导了损失重加权的效果。 }}{9}{figure.2}\protected@file@percent }
+\newlabel{fig:loss_ratio}{{2}{9}{训练期间原始（未加权）文本-图像损失与图像-文本损失的比值$L_{t2i}/L_{i2t}$（$\alpha {=}0.75$）。尽管存在偏向t2i的显式优化偏差，该比率从第一个周期的约3.3倍上升到收敛时的超过13.5倍，均值为$11.86$倍（虚线）。这一不断扩大的差距表明队列引发的非对称性主导了损失重加权的效果。}{figure.2}{}}
 \citation{hymt152025tencent}
-\@writefile{toc}{\contentsline {subsection}{\numberline {10.5}扩展到多语言检索}{12}{subsection.10.5}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces Flickr30k上的零样本多语言检索。所有模型仅使用英文COCO描述进行训练。}}{12}{table.7}\protected@file@percent }
-\newlabel{tab:multilingual}{{7}{12}{Flickr30k上的零样本多语言检索。所有模型仅使用英文COCO描述进行训练。}{table.7}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {10.6}帧采样策略的影响：关键帧检测与均匀采样对比}{12}{subsection.10.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}资源约束自然导致非对称设计}{10}{subsection.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}Stack LoRA实现高效领域迁移}{10}{subsection.5.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.5}扩展到多语言检索}{10}{subsection.5.5}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces Flickr30k上的零样本多语言检索。所有模型仅使用英文COCO描述进行训练。}}{10}{table.7}\protected@file@percent }
+\newlabel{tab:multilingual}{{7}{10}{Flickr30k上的零样本多语言检索。所有模型仅使用英文COCO描述进行训练。}{table.7}{}}
 \citation{luo2022clip4clip}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.6}帧采样策略的影响：关键帧检测与均匀采样对比}{11}{subsection.5.6}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces 帧采样策略对比（MSVD零样本视频检索，Stack LoRA配置）。两种策略均使用12帧预算和均值池化。}}{11}{table.8}\protected@file@percent }
+\newlabel{tab:sampling}{{8}{11}{帧采样策略对比（MSVD零样本视频检索，Stack LoRA配置）。两种策略均使用12帧预算和均值池化。}{table.8}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {六、}应用实例}{11}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}命令行检索工具}{11}{subsection.6.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Gradio交互式Web界面}{11}{subsection.6.2}\protected@file@percent }
 \citation{hymt152025tencent}
 \citation{gorti2022xpool}
-\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces 帧采样策略对比（MSVD零样本视频检索，Stack LoRA配置）。两种策略均使用12帧预算和均值池化。}}{13}{table.8}\protected@file@percent }
-\newlabel{tab:sampling}{{8}{13}{帧采样策略对比（MSVD零样本视频检索，Stack LoRA配置）。两种策略均使用12帧预算和均值池化。}{table.8}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {十一、}局限性}{13}{section.11}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {十二、}未来工作}{13}{section.12}\protected@file@percent }
 \citation{huang2023vop}
 \citation{cao2024acl}
+\@writefile{toc}{\contentsline {section}{\numberline {七、}局限性}{12}{section.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {八、}未来工作}{12}{section.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {九、}结论}{12}{section.9}\protected@file@percent }
 \bibstyle{plainnat}
 \bibcite{radford2021clip}{{1}{2021}{{Radford et al.}}{{Radford, Kim, Hallacy, Ramesh, Goh, Agarwal, Sastry, Askell, Mishkin, Clark, Krueger, and Sutskever}}}
 \bibcite{devlin2019bert}{{2}{2019}{{Devlin et al.}}{{Devlin, Chang, Lee, and Toutanova}}}
 \bibcite{he2020moco}{{3}{2020}{{He et al.}}{{He, Fan, Wu, Xie, and Girshick}}}
 \bibcite{hu2022lora}{{4}{2022}{{Hu et al.}}{{Hu, Shen, Wallis, Allen-Zhu, Li, Wang, Wang, and Chen}}}
-\@writefile{toc}{\contentsline {section}{\numberline {十三、}结论}{14}{section.13}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {十四、}任务分工}{14}{section.14}\protected@file@percent }
 \bibcite{chen2022altclip}{{5}{2022}{{Chen et al.}}{{Chen, Liu, Zhang, Ye, Yang, and Wu}}}
 \bibcite{yang2022chinese}{{6}{2022}{{Yang et al.}}{{Yang, Pan, Lin, Men, Zhang, Zhou, and Zhou}}}
 \bibcite{oord2018representation}{{7}{2018}{{van den Oord et al.}}{{van den Oord, Li, and Vinyals}}}
+\@writefile{toc}{\contentsline {section}{\numberline {十、}任务分工}{13}{section.10}\protected@file@percent }
 \bibcite{young2014flickr30k}{{8}{2014}{{Young et al.}}{{Young, Lai, Hodosh, and Hockenmaier}}}
 \bibcite{lin2014coco}{{9}{2014}{{Lin et al.}}{{Lin, Maire, Belongie, Hays, Perona, Ramanan, Dollár, and Zitnick}}}
 \bibcite{conneau2020xlmr}{{10}{2020}{{Conneau et al.}}{{Conneau, Khandelwal, Goyal, Chaudhary, Wenzek, Guzmán, Grave, Ott, Zettlemoyer, and Stoyanov}}}
@@ -117,7 +115,7 @@
 \bibcite{chen2011collecting}{{23}{2011}{{Chen and Dolan}}{{}}}
 \bibcite{claudecode2025}{{24}{2025}{{Chatlatanagulchai et al.}}{{Chatlatanagulchai, Thonglek, Reid, Kashiwa, Leelaprute, Rungsawang, Manaskasemsak, and Iida}}}
 \bibcite{deepseekv4}{{25}{2026}{{DeepSeek-AI}}{{}}}
-\@writefile{toc}{\contentsline {section}{\numberline {十五、}超参数选择}{16}{section.15}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces 关键超参数。CLIP ViT-B/32（OpenAI）基线：t2i R@1~57.90\%，i2t R@1~76.90\%。}}{16}{table.9}\protected@file@percent }
-\newlabel{tab:hyperparams}{{9}{16}{关键超参数。CLIP ViT-B/32（OpenAI）基线：t2i R@1~57.90\%，i2t R@1~76.90\%。}{table.9}{}}
-\gdef \@abspage@last{16}
+\@writefile{toc}{\contentsline {section}{\numberline {十一、}超参数选择}{15}{section.11}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces 关键超参数。CLIP ViT-B/32（OpenAI）基线：t2i R@1~57.90\%，i2t R@1~76.90\%。}}{15}{table.9}\protected@file@percent }
+\newlabel{tab:hyperparams}{{9}{15}{关键超参数。CLIP ViT-B/32（OpenAI）基线：t2i R@1~57.90\%，i2t R@1~76.90\%。}{table.9}{}}
+\gdef \@abspage@last{15}
