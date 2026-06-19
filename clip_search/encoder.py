@@ -88,7 +88,7 @@ class CLIPEncoder:
         """Encode a list of RGB frames into per-frame (N, 512) L2-normed embeddings.
 
         Unlike encode_scene(), this does NOT mean-pool. Returns all per-frame
-        embeddings for downstream temporal processing.
+        embeddings for downstream processing (e.g. mean pooling).
         """
         if not frames:
             return np.zeros((0, 512), dtype=np.float32)

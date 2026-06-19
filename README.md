@@ -1,8 +1,8 @@
 # eureka-from-CLIP
 
-**Text-to-Video Scene Retrieval with BERT-Aligned CLIP + Temporal Transformer**
+**Text-to-Video Scene Retrieval with BERT-Aligned CLIP**
 
-Retrieve video scenes using natural language queries. Two-stage contrastive training aligns a text encoder (BERT or CLIP) with frozen CLIP vision embeddings, then optionally adds temporal reasoning via a learned transformer over per-frame features.
+Retrieve video scenes using natural language queries. Contrastive training aligns a text encoder (BERT or CLIP) with frozen CLIP vision embeddings. Video representations are obtained by mean-pooling per-frame CLIP embeddings.
 
 ---
 
@@ -12,28 +12,25 @@ Retrieve video scenes using natural language queries. Two-stage contrastive trai
                               ┌──────────────────────┐
 Video → PySceneDetect ──────→ │  T frames / scene     │
                               └──────────┬───────────┘
-                                         ↓
+	                         ↓
                          ┌───────────────────────────────┐
                          │  CLIP ViT-B/32 Vision Encoder  │  (frozen)
                          │  (per-frame → L2-normed 512d) │
                          └──────────────────┬────────────┘
-                            ╱                ┊              ╲
-                      mean pool        TemporalTransformer     mean pool
-                           ╱                ┊                  ╲
-                    ┌──────────┐     ┌──────────────┐     ┌──────────┐
-                    │ scene_emb│────→│ scene_emb    │     │ text_emb │
-                    │ (CLIP)   │     │ (temporal)   │     │ (CLIP)   │
-                    └─────┬────┘     └──────┬───────┘     └─────┬────┘
-                          └────────┬────────┘                  │
-                                   ↓                           ↓
-                           cosine similarity  ←───────  text embedding
-                                                              ↑
-                                                    ┌─────────────────┐
-                                                    │ Text Encoder    │
-                                                    │ (BERT or CLIP)  │
-                                                    └────────┬────────┘
-                                                             │
-                                                      "a person walking"
+                                        mean pool
+                                           ↓
+                     ┌─────────────────────┴─────────────────────┐
+                     │         scene_emb (L2-normed)             │
+                     └─────────────────────┬─────────────────────┘
+                                           ↓
+                                   cosine similarity  ←───────  text embedding
+                                                                 ↑
+                                                       ┌─────────────────┐
+                                                       │ Text Encoder    │
+                                                       │ (BERT or CLIP)  │
+                                                       └────────┬────────┘
+                                                                │
+                                                         "a person walking"
 ```
 
 Two text encoder options, selected via `text_encoder.type` in config:
@@ -43,12 +40,7 @@ Two text encoder options, selected via `text_encoder.type` in config:
 | `bert` | BERT-base + ProjectionHead(768→512) | Full fine-tuning or LoRA | Higher recall when trained with queue + uniformity |
 | `clip` | CLIP ViT-B/32 text encoder (open_clip) | LoRA only (base frozen) | Quick alignment, smaller checkpoints |
 
-Two scene encoding modes:
-
-| Mode | Method | Use case |
-|------|--------|----------|
-| **Legacy** | CLIP per-frame → mean pool → L2-norm | Fast, no temporal sensitivity |
-| **Temporal** | CLIP per-frame → TemporalTransformer | Understands order ("X then Y") |
+Scene encoding uses mean-pooled CLIP per-frame embeddings (L2-normed).
 
 ---
 
@@ -192,42 +184,6 @@ text_encoder:
 
 Note: CLIP's transformer uses fused QKV (`in_proj_weight` in `nn.MultiheadAttention`), so LoRA is applied to output projections and MLP layers rather than query/value.
 
-### Option C: Temporal Transformer
-
-Jointly trains a TemporalTransformer + frozen pretrained BERT on **synthetic pseudo-video sequences** built from COCO images.
-
-**Synthetic sequences** group K=3~10 random COCO images, pick one caption per image, and build:
-- **Correct caption**: temporally ordered with connectors (*"First, a dog. Then, a cat. Finally, a car."*)
-- **Shuffled caption**: same captions in permuted order (negative for temporal-order loss)
-
-**Two losses** (in config `default3_temporal.yaml`):
-
-| Loss | Weight | Purpose |
-|------|--------|---------|
-| `SymmetricInfoNCE` | 1.0 | Semantic alignment: scene ↔ description |
-| `PositionPredictionReward` | 1.0 | Frame-level MSE on (cx, cy, scale) for motion samples |
-| `AnchorMSE` | 0.05 | Keep video embedding anchored in CLIP space |
-
-**Motion sequences** (optional, advanced): Use YOLO segmentation + LaMa inpainting to extract objects from COCO images, then composite them onto clean backgrounds along scripted trajectories (horizontal/diagonal/zoom). This provides ground-truth per-frame positions for the position-prediction reward.
-
-Prerequisites:
-1. Precomputed COCO embeddings
-2. Precomputed motion sequences (if using `--use_motion`)
-3. A trained BERT checkpoint from Option A
-
-```bash
-# Step 1: Precompute motion sequences (takes hours, GPU-heavy)
-python scripts/precompute_motion_sequences.py \
-    --config config/default3_temporal.yaml \
-    --total_sequences 50000 --val_sequences 2500 \
-    --workers 4
-
-# Step 2: Train temporal transformer
-python scripts/train_temporal.py \
-    --bert_checkpoint ../weights/bert_best.pt \
-    --config config/default3_temporal.yaml \
-    --use_motion
-```
 
 ---
 
@@ -280,18 +236,11 @@ Saves scene thumbnails, frames, and `metadata.json` to `./segments/demo/`.
 python run.py ./segments/demo --query "a person walking"
 ```
 
-**Legacy + BERT** (trained text encoder):
+**BERT** (trained text encoder):
 
 ```bash
 python run.py ./segments/demo --query "a person walking" \
     --bert_checkpoint checkpoints/bert_epoch02_val1.5993.pt
-```
-
-**Temporal mode** (CLIP per-frame → TemporalTransformer + BERT):
-
-```bash
-python run.py ./segments/demo --query "a person walking then sitting" \
-    --temporal_checkpoint checkpoints/temporal_epoch03_val1.2345.pt
 ```
 
 ### Gradio Web UI
@@ -301,7 +250,7 @@ python app.py
 ```
 
 Opens a browser UI with two tabs:
-1. **Process Video** — upload a video, detect scenes, optionally enable temporal transformer
+1. **Process Video** — upload a video, detect scenes, extract frame embeddings
 2. **Search Scenes** — query indexed scenes, view ranked results with thumbnails
 
 ---
@@ -313,31 +262,28 @@ Opens a browser UI with two tabs:
 │   ├── encoder.py                    # CLIP ViT-B/32: encode_scene, encode_frames, encode_text
 │   ├── engine.py                     # SearchEngine: segment → encode → rank
 │   ├── segmenter.py                  # PySceneDetect wrapper with short-scene merging
-│   └── temporal_pipeline.py          # Build temporal inference: CLIP + TemporalTransformer + BERT
+│   └── text_encoder_loader.py        # Shared text encoder loading (BERT / CLIP)
 ├── src/
 │   ├── models/
-│   │   ├── bert_encoder.py           # BERT-base + ProjectionHead (768→512) + LoRA
+│   │   ├── bert_encoder.py           # BERT-base + ProjectionHead (768→512) + LoRA + Stack LoRA
 │   │   ├── clip_text_encoder.py      # CLIP text transformer (open_clip) + LoRA (differentiable forward)
-│   │   └── temporal_transformer.py   # Learnable PE + TransformerEncoder + per-frame position bias
+│   │   └── mlp_encoder.py            # Frozen BERT + 3-layer MLP (ablation baseline)
 │   ├── data/
 │   │   ├── coco_dataset.py           # COCO image-caption pairs + collate functions
 │   │   ├── flickr_dataset.py         # Flickr30k dataset (for evaluation)
 │   │   ├── flickr_zh_dataset.py      # Chinese Flickr30k (cross-lingual eval)
 │   │   ├── eval_dataset.py           # Combined COCO + Flickr val loader
-│   │   ├── sequence_dataset.py       # Synthetic pseudo-video sequences (connector-based)
-│   │   └── mixed_dataset.py          # Precomputed motion + connector sequences
+│   │   └── video_dataset.py          # MSR-VTT / MSVD video frame embeddings
 │   └── training/
-│       ├── loss.py                   # SymmetricInfoNCE, QueueInfoNCE, OrderConsistencyLoss, PositionPredictionReward
+│       ├── loss.py                   # SymmetricInfoNCE, QueueInfoNCE (contrastive losses)
 │       ├── trainer.py                # Training loop with AMP, TQDM, checkpointing, queue management
 │       ├── queue.py                  # GPU-resident FIFO contrastive queue (circular buffer)
 │       └── evaluation.py             # Recall@K metrics (COCO-style)
 ├── scripts/
 │   ├── precompute_embeddings.py      # Extract CLIP image embeddings from COCO
 │   ├── precompute_flickr_embeddings.py  # Extract CLIP embeddings from Flickr30k
-│   ├── precompute_motion_sequences.py   # Generate motion pseudo-videos (YOLO + LaMa + compositing)
-│   ├── continue_motion_sequences.py  # Continue generating sequences after interruption
-│   ├── train_bert.py                 # Train BERT text encoder (+ queue, LoRA, multilingual)
-│   ├── train_temporal.py             # Train TemporalTransformer with frozen BERT
+│   ├── train_bert.py                 # BERT text encoder training (COCO, LoRA, queue)
+│   ├── train_bert_domain.py          # Domain adaptation on MSR-VTT (Stack LoRA)
 │   ├── evaluate_checkpoint.py        # Evaluate trained checkpoint on COCO + Flickr
 │   ├── evaluate_clip_text_encoder.py # CLIP zero-shot baseline on Flickr30k
 │   ├── evaluate_multilingual.py      # Bilingual Flickr30k eval
@@ -345,13 +291,10 @@ Opens a browser UI with two tabs:
 │   ├── download_openai_clip.py       # Download OpenAI CLIP via modelscope + HF conversion
 │   └── convert_hf_to_openclip.py     # Convert HF Transformers CLIP → open_clip safetensors
 ├── config/
-│   ├── default.yaml                  # Full config: COCO+BERT+LoRA+Queue+Motion+Temporal
 │   ├── default_clip_text.yaml        # CLIP text encoder variant (LoRA on CLIP transformer)
 │   ├── default_multilingual.yaml     # Multilingual BERT (bert-base-multilingual-cased)
-│   ├── default2.yaml                 # Variant: r=8, t2i_weight=0.75, uniformity=1.25
-│   ├── default3.yaml                 # Variant: r=8, t2i_weight=0.75, uniformity=2, r=16
-│   ├── default3_temporal.yaml        # Temporal training config (position prediction)
-│   └── default4.yaml                 # Variant: r=8, t2i_weight=0.9, uniformity=1.25
+│   ├── bert_domain*.yaml             # Domain adaptation on MSR-VTT
+│   └── ablation/                     # Ablation studies (queue, masking, weight variants)
 ├── run.py                            # CLI search entry point
 └── app.py                            # Gradio web UI
 ```
@@ -367,8 +310,6 @@ models/
 ├── clip/                             # Legacy OpenAI CLIP checkpoints
 │   ├── openai_open_clip_model.safetensors
 │   └── openai_pytorch_model.bin
-├── lama/                             # LaMa image inpainting model (motion sequences)
-├── yolo26x-seg.pt                    # YOLO segmentation model (motion sequences)
 └── hy-mt-1.8b/                       # Hy machine translation model (multilingual data pipeline)
 ```
 
@@ -378,10 +319,9 @@ Each YAML config inherits the same base structure. Key differences between confi
 
 | Config | `text_encoder.type` | LoRA | Queue | Flicker train | Checkpoint dir |
 |--------|---------------------|------|-------|---------------|----------------|
-| `default.yaml` | bert | r=8 (bert) | Yes (49K) | No | `weights/r8_weight0.75_uniformity1.25` |
 | `default_clip_text.yaml` | clip | r=8 (clip) | Yes (49K) | No | `weights/CLIP_r8_weight0.75_uniformity2` |
 | `default_multilingual.yaml` | bert | r=8 (bert) | Yes (49K) | No | `weights/Multilingual_r8_weight0.75_uniformity2` |
-| `default3_temporal.yaml` | — | — | — | — | `weights/r8_weight0.75_uniformity2_temporal` |
+| `config/ablation/ours.yaml` | bert | r=8 (bert) | Yes (49K) | No | `weights/ours` |
 
 ## Citation
 

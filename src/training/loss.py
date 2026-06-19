@@ -45,59 +45,6 @@ class SymmetricInfoNCE(nn.Module):
         return (1 - w) * l_i2t + w * l_t2i
 
 
-class OrderConsistencyLoss(nn.Module):
-    """Triplet margin loss for temporal order.
-
-    Penalizes when sim(anchor, positive) is not closer than sim(anchor, negative)
-    by at least a margin. Operates on L2-normed embeddings (cosine via dot product).
-
-    Loss = max(0, margin - sim(anchor, pos) + sim(anchor, neg)).mean()
-    """
-
-    def __init__(self, margin: float = 0.2):
-        super().__init__()
-        self.margin = margin
-
-    def forward(
-        self,
-        anchor: torch.Tensor,
-        positive: torch.Tensor,
-        negative: torch.Tensor,
-    ) -> torch.Tensor:
-        sim_pos = (anchor * positive).sum(dim=-1)   # [B], cosine similarity
-        sim_neg = (anchor * negative).sum(dim=-1)   # [B]
-        return F.relu(self.margin - sim_pos + sim_neg).mean()
-
-
-class PositionPredictionReward(nn.Module):
-    """RL-inspired reward model: predict per-frame (cx, cy, scale) from
-    the temporal transformer's per-frame outputs.
-
-    The "reward" is high (MSE low) when the transformer captures the
-    object trajectory well.  Only applied to motion-sequence frames;
-    connector / original sequences set pos_mask = False.
-
-    Architecture: a single Linear(d_model, 3) applied independently to
-    each frame — ~1500 parameters, negligible GPU memory.
-    """
-
-    def __init__(self, d_model: int = 512):
-        super().__init__()
-        self.head = nn.Linear(d_model, 3)
-
-    def forward(
-        self,
-        per_frame: torch.Tensor,   # [B, T, d_model]
-        pos_target: torch.Tensor,  # [B, T, 3]   normalised (cx, cy, scale)
-        pos_mask: torch.BoolTensor,  # [B, T]     True = valid position
-    ) -> torch.Tensor:
-        pred = self.head(per_frame)  # [B, T, 3]
-        loss = F.mse_loss(pred, pos_target, reduction="none").mean(dim=-1)  # [B, T]
-        loss = loss * pos_mask.float()
-        n_valid = pos_mask.sum()
-        return loss.sum() / n_valid.clamp(min=1) if n_valid > 0 else loss.new_tensor(0.0)
-
-
 class QueueInfoNCE(nn.Module):
     """Symmetric InfoNCE with extra negatives from a ContrastiveQueue
     and false-negative masking based on image_id.
