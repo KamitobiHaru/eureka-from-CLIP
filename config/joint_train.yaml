@@ -4,7 +4,7 @@
 # BERT is initialized from the pretrained retrieval checkpoint.
 data:
   msrvtt:
-    root: /data2/zsy/datasets/MSR-VTT
+    root: ./datasets/MSR-VTT
     train_annotation: msrvtt_train_9k.json
     test_annotation: msrvtt_test_1k.json
     frame_cache: ./data/msrvtt/clip_keyframes
@@ -36,7 +36,7 @@ training:
   warmup_steps: 2000
   amp: true
   num_workers: 8
-  checkpoint_dir: /data2/zsy/weights/clip/temporal_lr5e-6
+  checkpoint_dir: ./checkpoints/temporal_lr5e-6
 
 lora:
   enabled: true
@@ -51,4 +51,4 @@ queue:
   mask_stale_texts: true
 
 checkpoint:
-  bert_pretrain: /data2/zsy/weights/clip/no_uniform_seed42/ours/bert_epoch26_t2i60.5.pt
+  bert_pretrain: ./checkpoints/no_uniform_seed42/ours/bert_epoch26_t2i60.5.pt

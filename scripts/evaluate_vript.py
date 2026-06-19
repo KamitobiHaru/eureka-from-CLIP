@@ -11,9 +11,9 @@ Usage:
         --vript_ann data/vript/annotations.json \
         --vript_frames data/vript/clip_keyframes \
         --truncation fair \
-        --nostack_checkpoint /run/media/occccce/D/checkpoints/bert_domain_1e-5_batch128/bert_domain_best_e28_msvd17.5.pt \
-        --stack_checkpoint /run/media/occccce/D/checkpoints/bert_domain_stack_lora_1e-5_batch128/bert_domain_best_e25_msvd17.9.pt \
-        --pretrain_checkpoint /run/media/occccce/D/checkpoints/bert_epoch26_t2i60.5.pt \
+        --nostack_checkpoint ./checkpoints/bert_domain_1e-5_batch128/bert_domain_best_e28_msvd17.5.pt \
+        --stack_checkpoint ./checkpoints/bert_domain_stack_lora_1e-5_batch128/bert_domain_best_e25_msvd17.9.pt \
+        --pretrain_checkpoint ./checkpoints/bert_epoch26_t2i60.5.pt \
         --output results/vript_ablation.json
 
     # Demonstrate CLIP's long-text weakness (BERT sees full caption)
@@ -295,9 +295,9 @@ def main():
     parser = argparse.ArgumentParser(
         description="Evaluate CLIP / no-stack / stack on VRIPT"
     )
-    parser.add_argument("--vript_ann", default="/run/media/occccce/D/vript_processed/annotations.json",
+    parser.add_argument("--vript_ann", default="./data/vript/annotations.json",
                         help="VRIPT annotation JSON")
-    parser.add_argument("--vript_frames", default="/run/media/occccce/D/vript_processed/clip_keyframes",
+    parser.add_argument("--vript_frames", default="./data/vript/clip_keyframes",
                         help="VRIPT CLIP frame embeddings directory")
     parser.add_argument("--mode", nargs="+",
                         default=["clip", "nostack", "stack"],
@@ -308,16 +308,16 @@ def main():
                         help="'fair': all truncated to 77 tokens; "
                              "'clip-only': CLIP truncated to 77, BERT sees full text")
     parser.add_argument("--nostack_checkpoint",
-                        default="/run/media/occccce/D/checkpoints/bert_domain_1e-5_batch128/bert_domain_best_e28_msvd17.5.pt")
+                        default="./checkpoints/bert_domain_1e-5_batch128/bert_domain_best_e28_msvd17.5.pt")
     parser.add_argument("--stack_checkpoint",
-                        default="/run/media/occccce/D/checkpoints/bert_domain_stack_lora_1e-5_batch128/bert_domain_best_e25_msvd17.9.pt")
+                        default="./checkpoints/bert_domain_stack_lora_1e-5_batch128/bert_domain_best_e25_msvd17.9.pt")
     parser.add_argument("--pretrain_checkpoint",
-                        default="/run/media/occccce/D/checkpoints/bert_epoch26_t2i60.5.pt",
+                        default="./checkpoints/bert_epoch26_t2i60.5.pt",
                         help="COCO-pretrained checkpoint for Stack LoRA initialization")
     parser.add_argument("--bert_model",
-                        default="/run/media/occccce/D/models/bert-base-uncased",
+                        default="./models/bert-base-uncased",
                         help="BERT model path")
-    parser.add_argument("--output", default="/run/media/occccce/D/results/vript_ablation.json",
+    parser.add_argument("--output", default="./results/vript_ablation.json",
                         help="Output JSON path for results")
     parser.add_argument("--max_samples", type=int, default=None,
                         help="Limit to N samples for quick testing")

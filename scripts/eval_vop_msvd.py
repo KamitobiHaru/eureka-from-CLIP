@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.training.evaluation import compute_recall_metrics
 
 # ── Paths / constants ──────────────────────────────────────────────
-VOP_DIR = Path("/run/media/occccce/E/VoP")
+VOP_DIR = Path("./datasets/VoP")
 CKPT_PATH = VOP_DIR / "VoP_msrvtt9k.pth"
 VOCAB_PATH = VOP_DIR / "bpe_simple_vocab_16e6.txt.gz"
 MSVD_ANN = Path("./data/msvd/msvd_test_only.json")
@@ -436,7 +436,7 @@ def main():
 
     # ── DIAGNOSTIC: test video encoder ──
     print("\n── DIAGNOSTIC: video encoder ──")
-    video_dir = Path("/run/media/occccce/E/MSVD/OpenDataLab___MSVD/raw/MSVD/YouTubeClips")
+    video_dir = Path("./datasets/MSVD/YouTubeClips")
     # Pick first 3 available videos
     test_vids = []
     for vid in unique_ids:

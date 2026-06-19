@@ -22,8 +22,8 @@ from scripts.eval_vop_msvd import VoPModel, ClipTokenizer, DEVICE, VOP_DIR, CKPT
 from src.training.evaluation import compute_recall_metrics
 
 # ── Paths ──────────────────────────────────────────────────────────────
-FLICKR_CSV = Path("/run/media/occccce/E/flickr30/flickr_annotations_30k.csv")
-FLICKR_IMG_DIR = Path("/run/media/occccce/E/flickr30/f78a015e45ea38d4367367223b2bb63cec0d549d5da13c6211663e5439a93216 (2)/flickr30k-images")
+FLICKR_CSV = Path("./datasets/flickr30k/flickr_annotations_30k.csv")
+FLICKR_IMG_DIR = Path("./datasets/flickr30k/flickr30k-images")
 
 # ── Image transform (CLIP standard) ────────────────────────────────────
 image_transform = transforms.Compose([

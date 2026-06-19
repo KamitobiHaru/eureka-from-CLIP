@@ -97,7 +97,7 @@ motion:
   inpaint_size: 256
   yolo_model: ./models/yolo26x-seg.pt
   lama_model: ./models/lama
-  coco_image_root: /data2/zsy/datasets/coco2017_trainval
+  coco_image_root: ./datasets/coco2017
   min_object_area: 0.08
   max_object_area: 0.5
   confidence_threshold: 0.5

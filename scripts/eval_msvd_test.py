@@ -36,17 +36,17 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 CHECKPOINTS = {
     "Ours (Stage 1, COCO对齐)": {
-        "path": "/run/media/occccce/D/checkpoints/bert_epoch26_t2i60.5.pt",
+        "path": "./checkpoints/bert_epoch26_t2i60.5.pt",
         "lora_r": 8,
         "lora_alpha": 16,
     },
     "Ours (Stack LoRA)": {
-        "path": "/run/media/occccce/D/checkpoints/bert_domain_stack_lora_1e-5_batch128/bert_domain_best_e25_msvd17.9.pt",
+        "path": "./checkpoints/bert_domain_stack_lora_1e-5_batch128/bert_domain_best_e25_msvd17.9.pt",
         "lora_r": 2,
         "lora_alpha": 4,
     },
     "Ours (No Stack)": {
-        "path": "/run/media/occccce/D/checkpoints/bert_domain_1e-5_batch128/bert_domain_e30_msvd17.5.pt",
+        "path": "./checkpoints/bert_domain_1e-5_batch128/bert_domain_e30_msvd17.5.pt",
         "lora_r": 8,
         "lora_alpha": 16,
     },

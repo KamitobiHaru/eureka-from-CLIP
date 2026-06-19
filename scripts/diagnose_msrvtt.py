@@ -44,7 +44,7 @@ def load_video_frames(frame_cache, video_ids, max_frames=12):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--msrvtt_root", default="/data1/zsy/datasets/MSR-VTT")
+    parser.add_argument("--msrvtt_root", default="./datasets/MSR-VTT")
     parser.add_argument("--frame_cache", default="./data/msrvtt/clip_embeddings")
     parser.add_argument("--text_cache", default="./data/msrvtt/text_embeddings")
     parser.add_argument("--config", default="config/default3_project.yaml")

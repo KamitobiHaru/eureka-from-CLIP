@@ -781,7 +781,7 @@ def main():
     m_cfg = cfg.get("motion", {})
     t_cfg = cfg.get("temporal", {})
 
-    coco_image_root = Path(m_cfg.get("coco_image_root", "/data2/zsy/datasets/coco2017_trainval"))
+    coco_image_root = Path(m_cfg.get("coco_image_root", "./datasets/coco2017"))
     ann_dir = Path(cfg["data"]["coco_root"]) / cfg["data"].get("annotations_dir", "annotations")
     emb_cache = Path(cfg["data"]["embedding_cache"])
     cache_dir = Path(m_cfg.get("cache_dir", "data/coco/mixed_sequences"))

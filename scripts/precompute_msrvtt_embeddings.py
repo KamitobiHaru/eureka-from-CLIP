@@ -7,7 +7,7 @@ uniform frames from each, encodes via CLIP ViT-B/32, and saves per-video
 
 Usage:
     python scripts/precompute_msrvtt_embeddings.py \
-        --video_root /data1/zsy/datasets/MSR-VTT \
+        --video_root ./datasets/MSR-VTT \
         --cache_dir ./data/msrvtt/clip_embeddings \
         --num_frames 12 \
         --device cuda:0
@@ -62,7 +62,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Precompute CLIP frame embeddings for MSR-VTT test videos."
     )
-    parser.add_argument("--video_root", default="/data1/zsy/datasets/MSR-VTT",
+    parser.add_argument("--video_root", default="./datasets/MSR-VTT",
                         help="Root dir containing video/ subdirectory")
     parser.add_argument("--cache_dir", default="./data/msrvtt/clip_embeddings",
                         help="Where to save .npy files")

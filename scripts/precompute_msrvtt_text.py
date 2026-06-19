@@ -7,7 +7,7 @@ Output:
 
 Usage:
     python scripts/precompute_msrvtt_text.py \
-        --msrvtt_root /data1/zsy/datasets/MSR-VTT \
+        --msrvtt_root ./datasets/MSR-VTT \
         --cache_dir ./data/msrvtt/text_embeddings \
         --config config/default3_project.yaml \
         --bert_checkpoint /path/to/bert_best.pt \
@@ -60,7 +60,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Precompute CLIP and BERT text embeddings for MSR-VTT."
     )
-    parser.add_argument("--msrvtt_root", default="/data1/zsy/datasets/MSR-VTT",
+    parser.add_argument("--msrvtt_root", default="./datasets/MSR-VTT",
                         help="Root dir containing annotation JSON files")
     parser.add_argument("--cache_dir", default="./data/msrvtt/text_embeddings",
                         help="Output directory for .pt files")

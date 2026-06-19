@@ -18,7 +18,7 @@ from tqdm import tqdm
 
 def main():
     parser = argparse.ArgumentParser(description="Preprocess MSVD annotations.")
-    parser.add_argument("--input", default="/data2/zsy/datasets/MSVD/OpenDataLab___MSVD/raw/MSVD/AllVideoDescriptions.txt")
+    parser.add_argument("--input", default="./datasets/MSVD/AllVideoDescriptions.txt")
     parser.add_argument("--output_dir", default="./data/msvd")
     args = parser.parse_args()
 

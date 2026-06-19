@@ -6,7 +6,7 @@ BERT variants), then runs three retrieval evaluations under identical protocol.
 
 Usage:
     python scripts/evaluate_msrvtt_ablation.py \
-        --msrvtt_root /data1/zsy/datasets/MSR-VTT \
+        --msrvtt_root ./datasets/MSR-VTT \
         --frame_cache ./data/msrvtt/clip_embeddings \
         --text_cache ./data/msrvtt/text_embeddings \
         --temporal_checkpoint /path/to/temporal_best.pt \
@@ -122,7 +122,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="MSR-VTT ablation: CLIP vs BERT vs BERT+Temporal."
     )
-    parser.add_argument("--msrvtt_root", default="/data1/zsy/datasets/MSR-VTT")
+    parser.add_argument("--msrvtt_root", default="./datasets/MSR-VTT")
     parser.add_argument("--frame_cache", default="./data/msrvtt/clip_embeddings",
                         help="Dir with per-video .npy frame embeddings")
     parser.add_argument("--text_cache", default="./data/msrvtt/text_embeddings",

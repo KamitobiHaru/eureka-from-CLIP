@@ -6,7 +6,7 @@ Only the text encoder changes — this isolates text-encoding quality.
 
 Usage:
     python scripts/benchmark_text_encoders.py \
-        --bert_checkpoint /data2/zsy/weights/clip/bert_epoch26_t2i60.5.pt
+        --bert_checkpoint ./checkpoints/bert_epoch26_t2i60.5.pt
 """
 
 import argparse
@@ -32,7 +32,7 @@ from src.training.evaluation import compute_recall_metrics
 
 # ── config ──────────────────────────────────────────────────────────────────
 
-MSRVTT_ROOT = Path("/data2/zsy/datasets/MSR-VTT")
+MSRVTT_ROOT = Path("./datasets/MSR-VTT")
 MSRVTT_ANN = MSRVTT_ROOT / "msrvtt_test_1k.json"
 MSRVTT_FRAMES = Path("./data/msrvtt/clip_keyframes")
 
@@ -302,7 +302,7 @@ BERT_TOKENIZER = BertTokenizer.from_pretrained(str(BERT_MODEL_PATH))
 
 def main():
     parser = argparse.ArgumentParser(description="Benchmark CLIP vs BERT text encoder")
-    parser.add_argument("--bert_checkpoint", default="/data2/zsy/weights/clip/bert_epoch26_t2i60.5.pt")
+    parser.add_argument("--bert_checkpoint", default="./checkpoints/bert_epoch26_t2i60.5.pt")
     parser.add_argument("--encoder_type", default="bert", choices=["bert", "mlp"],
                         help="'bert' = BertEncoder+LoRA (default), 'mlp' = MLPBertEncoder (ablation)")
     parser.add_argument("--device", default=None)

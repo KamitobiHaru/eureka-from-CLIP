@@ -11,7 +11,7 @@ data:
     annotations_dir: annotations_trainval2017/annotations
     embedding_cache: ./data/coco/clip_embeddings
   msrvtt:
-    root: /data2/zsy/datasets/MSR-VTT
+    root: ./datasets/MSR-VTT
     train_annotation: msrvtt_train_9k.json
     frame_cache: ./data/msrvtt/clip_keyframes
   msvd:
@@ -38,7 +38,7 @@ training:
   amp: true
   num_workers: 8
   # Natural ratio: COCO ~591K / MSR-VTT ~180K ≈ 77% COCO, 23% MSR-VTT
-  checkpoint_dir: /data2/zsy/weights/clip/bert_mixed_stage1
+  checkpoint_dir: ./checkpoints/bert_mixed_stage1
 
 lora:
   enabled: true

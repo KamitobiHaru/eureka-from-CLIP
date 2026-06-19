@@ -35,7 +35,7 @@
       "nostack",
       "stack"
     ],
-    "nostack_checkpoint": "/run/media/occccce/D/checkpoints/bert_domain_1e-5_batch128/bert_domain_best_e28_msvd17.5.pt",
-    "stack_checkpoint": "/run/media/occccce/D/checkpoints/bert_domain_stack_lora_1e-5_batch128/bert_domain_best_e25_msvd17.9.pt"
+    "nostack_checkpoint": "./checkpoints/bert_domain_1e-5_batch128/bert_domain_best_e28_msvd17.5.pt",
+    "stack_checkpoint": "./checkpoints/bert_domain_stack_lora_1e-5_batch128/bert_domain_best_e25_msvd17.9.pt"
   }
 }

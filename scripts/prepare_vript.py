@@ -4,7 +4,7 @@ embeddings, and create a simplified annotation file.
 
 Usage:
     python scripts/prepare_vript.py \
-        --vript_root /run/media/occccce/D/vript \
+        --vript_root ./datasets/vript \
         --output_dir ./data/vript
 
 Step 1 extracts all video clips from the 42 zip archives.
@@ -66,9 +66,9 @@ def extract_clip_frames(clip_path: str, encoder, max_frames: int = MAX_FRAMES, b
 
 def main():
     parser = argparse.ArgumentParser(description="Prepare VRIPT dataset")
-    parser.add_argument("--vript_root", default="/run/media/occccce/D/vript",
+    parser.add_argument("--vript_root", default="./datasets/vript",
                         help="VRIPT dataset root (with zip files and jsonl)")
-    parser.add_argument("--output_dir", default="/run/media/occccce/D/vript_processed",
+    parser.add_argument("--output_dir", default="./data/vript",
                         help="Output directory for extracted data (use a drive with space)")
     parser.add_argument("--skip_extraction", action="store_true",
                         help="Skip CLIP frame encoding (only unzip + annotations)")

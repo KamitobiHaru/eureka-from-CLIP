@@ -4,13 +4,13 @@ encode them with frozen CLIP, and save per-video embeddings.
 
 Usage (MSR-VTT):
     python scripts/precompute_video_keyframes.py \
-        --video_dir /data2/zsy/datasets/MSR-VTT/video \
+        --video_dir ./datasets/MSR-VTT/video \
         --output_dir ./data/msrvtt/clip_keyframes \
         --pattern "*.mp4"
 
 Usage (MSVD):
     python scripts/precompute_video_keyframes.py \
-        --video_dir "/data2/zsy/datasets/MSVD/OpenDataLab___MSVD/raw/MSVD/YouTubeClips" \
+        --video_dir "./datasets/MSVD/YouTubeClips" \
         --output_dir ./data/msvd/clip_keyframes \
         --pattern "*.avi"
 """

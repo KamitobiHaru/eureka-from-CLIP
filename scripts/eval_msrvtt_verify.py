@@ -19,8 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.training.evaluation import compute_recall_metrics
 
-MSRVTT_ANN = Path("/run/media/occccce/E/MSR-VTT/msrvtt_test_1k.json")
-MSRVTT_VIDEO = Path("/run/media/occccce/E/MSR-VTT/raw_data/MSRVTT_Videos")
+MSRVTT_ANN = Path("./datasets/MSR-VTT/msrvtt_test_1k.json")
+MSRVTT_VIDEO = Path("./datasets/MSR-VTT/videos")
 FRAME_CACHE = Path("./data/msrvtt/clip_keyframes")       # uniform keyframes
 FRAME_CACHE_SCENE = Path("./data/msrvtt/clip_keyframes_scenedetect")
 NUM_FRAMES = 12
@@ -325,7 +325,7 @@ def main():
     print("── Ours Stack LoRA on MSR-VTT (uniform keyframes) ──")
     r_ours = eval_ours(
         test_data,
-        checkpoint_path="/run/media/occccce/D/checkpoints/bert_domain_stack_lora_scenedetect/bert_domain_best_e27_msvd28.2.pt",
+        checkpoint_path="./checkpoints/bert_domain_stack_lora_scenedetect/bert_domain_best_e27_msvd28.2.pt",
         frame_cache_path=FRAME_CACHE,
         lora_r=2, lora_alpha=4,
         device=device,
@@ -344,7 +344,7 @@ def main():
     print("── Ours Stack LoRA on MSR-VTT (scenedetect keyframes) ──")
     r_ours_sd = eval_ours(
         test_data,
-        checkpoint_path="/run/media/occccce/D/checkpoints/bert_domain_stack_lora_scenedetect/bert_domain_best_e27_msvd28.2.pt",
+        checkpoint_path="./checkpoints/bert_domain_stack_lora_scenedetect/bert_domain_best_e27_msvd28.2.pt",
         frame_cache_path=FRAME_CACHE_SCENE,
         lora_r=2, lora_alpha=4,
         device=device,
