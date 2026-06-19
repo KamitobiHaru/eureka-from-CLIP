@@ -27,12 +27,12 @@
 
 \begin{document}
 
-\title{基于参数高效BERT适配的零样本文本-视频检索 \\
-\large --- Eureka-from-CLIP 课程设计报告}
+\title{Eureka-from-CLIP: 有限资源下参数高效BERT适配的零样本文本-视频检索 \\
+\large --- Python应用开发基础课程设计报告}
 
-\author{张思远$^{\dagger}$\quad 程亚迪$^{\dagger}$\\[4pt]
-  \small 浙江工业大学\\
-  \small\texttt{\{zhangsiyuan,chengyadi\}@zjut.edu.cn}}
+\author{张思远$^{\dagger}$\quad 程亚迪$^{\dagger}$\\
+[4pt]指导老师：雷杰\\[4pt]
+  \small 浙江工业大学}
 
 \maketitle
 
@@ -100,7 +100,7 @@ MoCo \citep{he2020moco}引入了基于队列的字典用于对比学习，将字
 
 由于CLIP视觉编码器在两个阶段中均保持冻结，视频嵌入可一次离线预计算，并通过帧级关键特征的均值池化得到视频级表示，遵循CLIP4Clip \citep{luo2022clip4clip}确立的标准做法。冻结的编码器还确保了对比队列中的图像/视频嵌入永远不会变陈旧。
 
-\begin{figure}[h]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\textwidth]{figures/Figure1.png}
 \caption{Eureka-from-CLIP训练流程。冻结的CLIP视觉编码器预计算视频帧或图像嵌入（永不过时）。可训练的BERT文本编码器配合LoRA产生文本嵌入。图像队列为文本-图像学习提供丰富的负样本，而过时的文本队列则被遮蔽。}
@@ -147,7 +147,7 @@ MoCo \citep{he2020moco}引入了基于队列的字典用于对比学习，将字
 
 这种非对称队列设计如表\ref{tab:queue}所示。重要的是，训练哪个编码器以及保留哪一侧队列的选择并非随意。如果我们选择训练视觉编码器而冻结文本编码器，图像嵌入将变得过时，文本队列保持新鲜；此时队列将提升i2t而非t2i——与我们的需求相反。因此，我们的配置（训练文本编码器，保留图像队列）在训练目标和架构设计之间建立了自然的对齐：冻结的CLIP保证了新鲜的图像队列，新鲜的图像队列保证了强大的t2i学习。通过遮蔽过时的文本嵌入，我们进一步避免损害i2t梯度，而这又带来双重收益——因为t2i已经在损失函数中获得了更高的权重（$\alpha = 0.75$）。
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
 \caption{用于文本过时感知对比学习的非对称队列设计。}
 \label{tab:queue}
@@ -206,7 +206,7 @@ $\mathbf{I}_{\text{batch}} \mathbf{T}_{\text{batch}}^{\top}$ & $\mathbf{T}_{\tex
 
 表\ref{tab:video_results}展示了MSVD视频检索的主要结果。我们的两阶段方法取得了有竞争力的性能：
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
 \caption{MSVD上零样本文本-视频检索结果。所有方法使用相同的冻结CLIP ViT-B/32视觉编码器，采用均值池化的帧嵌入。}
 \label{tab:video_results}
@@ -230,7 +230,7 @@ Stack LoRA配置取得了最佳的视频检索性能（28.13\% t2i R@1），超�
 
 表\ref{tab:flickr_results}报告了Flickr30k图像检索结果，作为视频领域适配后跨模态对齐是否保持的辅助验证：
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
 \caption{Flickr30k测试集（1K图像）上的零样本图像检索结果。第一阶段结果是任何视频适配前COCO训练模型的性能。}
 \label{tab:flickr_results}
@@ -250,7 +250,7 @@ CLIP零样本（原生文本编码器） & 57.90 & --- \\
 
 \subsection{消融实验：非对称损失和队列设计的影响}
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
 \begin{tabular}{lcc}
 \toprule
@@ -265,7 +265,7 @@ CLIP零样本（原生文本编码器） & 57.90 & --- \\
 \label{tab:ablation}
 \end{table}
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
 \begin{tabular}{lcc}
 \toprule
@@ -294,7 +294,7 @@ $\alpha$（t2i权重） & t2i R@1 & i2t R@1 \\
 
 有趣的是，MLP配置在早期周期后验证损失也出现平台期（val\_loss在第5个周期达到最小值2.44，之后逐渐增加），表明事后投影很快耗尽了其表示能力。相比之下，LoRA配置在整个30周期的训练过程中持续改善。
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
 \caption{消融实验：LoRA对比MLP投影（可训练参数数量相当）。两种模型均在COCO上训练，在Flickr30k上进行零样本评估。}
 \label{tab:ablation_mlp}
@@ -324,7 +324,7 @@ $\alpha$的相对温和影响可以通过检查训练期间的损失动态来理
 
 这一观察解释了为什么$\alpha{=}0.50$配置（表\ref{tab:alpha}）达到了60.26 t2i R@1，仅比$\alpha{=}0.75$低0.22点。队列通过非对称地向t2i提供更多负样本，作为一种隐式正则化器，降低了对显式损失加权的需求。
 
-\begin{figure}[h]
+\begin{figure}[t!]
 \centering
 \includegraphics[width=0.72\textwidth]{figures/loss_ratio.pdf}
 \caption{
@@ -349,7 +349,7 @@ Stack LoRA的较小r=2适配器，由于其有限的表示容量，只能捕捉�
 
 我们的框架依赖BERT作为文本编码器，这自然地扩展到多语言场景，因为BERT提供了多语言变体（如bert-base-multilingual-cased），具有跨语言的共享分词器和嵌入空间。为探索这一能力，我们在相同的英文COCO描述上使用相同的超参数训练多语言BERT，并在中文Flickr30k上进行零样本评估——其中中文描述通过HY-MT1.5 \citep{hymt152025tencent}翻译原始英文描述得到。
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
 \caption{Flickr30k上的零样本多语言检索。所有模型仅使用英文COCO描述进行训练。}
 \label{tab:multilingual}
@@ -370,11 +370,11 @@ BERT-uncased（英文，我们的） & 60.48 & 74.60 \\
 
 \subsection{帧采样策略的影响：关键帧检测与均匀采样对比}
 
-我们的指导教师建议使用基于场景检测的关键帧采样替代均匀帧采样，认为场景感知的帧选择能够减少长静态镜头中的冗余，更有效地利用有限（12帧）的帧预算。为验证这一假设，我们使用PySceneDetect的ContentDetector（阈值为27.0）检测场景边界：按场景时长比例分配帧预算，确保每个场景至少采样一帧，并在每个场景内均匀采样。该策略产出的帧嵌入经过与均匀采样完全相同的均值池化流程和对比学习训练。
+关键帧提取是视频分析中的一项常用技术，基于场景检测选取代表性帧能够有效减少长静态镜头中的冗余，更有效地利用有限的帧预算 \citep{asha2018keyframe}。为验证这一假设，我们使用PySceneDetect的ContentDetector（阈值为27.0）检测场景边界：按场景时长比例分配帧预算，确保每个场景至少采样一帧，并在每个场景内均匀采样。该策略产出的帧嵌入经过与均匀采样完全相同的均值池化流程和对比学习训练。
 
-表\ref{tab:sampling}展示了两种采样策略在MSVD零样本视频检索上的对比结果。两种策略在所有指标上均高度接近：t2i R@1（28.15对比28.16）、t2i R@5（54.94对比54.93）、t2i R@10（66.78对比66.75）以及i2t各指标。Flickr30k图像检索上（56.48对比56.90）的差异同样处于正常波动范围内。两种配置之间不存在统计学显著的性能差距。
+表\ref{tab:sampling}展示了两种采样策略在MSVD零样本视频检索上的对比结果。两种策略在所有指标上均高度接近：t2i R@1（28.15对比28.13）、t2i R@5（54.94对比54.80）、t2i R@10（66.78对比66.35）以及i2t各指标。Flickr30k图像检索上（56.48对比56.90）的差异同样处于正常波动范围内。两种配置之间不存在统计学显著的性能差距。
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
 \caption{帧采样策略对比（MSVD零样本视频检索，Stack LoRA配置）。两种策略均使用12帧预算和均值池化。}
 \label{tab:sampling}
@@ -384,7 +384,7 @@ BERT-uncased（英文，我们的） & 60.48 & 74.60 \\
 \cmidrule(lr){2-4} \cmidrule(lr){5-7}
  & R@1 & R@5 & R@10 & R@1 & R@5 & R@10 \\
 \midrule
-均匀采样（我们的，Stack LoRA） & 28.16 & 54.93 & 66.75 & 45.97 & 64.33 & 72.09 \\
+均匀采样（我们的，Stack LoRA） & 28.13 & 54.80 & 66.35 & 44.78 & 63.28 & 71.19 \\
 关键帧采样（场景检测） & 28.15 & 54.94 & 66.78 & 45.22 & 64.03 & 71.34 \\
 \bottomrule
 \end{tabular}
@@ -404,7 +404,7 @@ BERT-uncased（英文，我们的） & 60.48 & 74.60 \\
 
 \subsection{Gradio交互式Web界面}
 
-我们基于Grado框架构建了一个浏览器端的交互式视频搜索应用（\texttt{app.py}），提供完整的图形化操作体验：
+我们基于Gradio框架构建了一个浏览器端的交互式视频搜索应用（\texttt{app.py}），提供完整的图形化操作体验：
 
 \begin{itemize}
   \item \textbf{视频库管理：}支持从文件夹加载视频或加载预计算缓存（通过\texttt{cache\_videos.py}预生成），自动检测视频文件并通过ffmpeg提取关键帧生成缩略图库。
@@ -442,19 +442,76 @@ BERT-uncased（英文，我们的） & 60.48 & 74.60 \\
 
 我们的方法为用任意BERT变体替换CLIP文本编码器提供了一种实用、可泛化的方案，使视频、多语言和领域特定检索应用无需昂贵的从头训练。
 
-\section{任务分工}
+\section{作者分工}
 
-本项目的具体任务分工如下：
+张思远负责方法设计（LoRA适配策略、非对称队列机制、Stack LoRA领域迁移）、实验实施（第一阶段COCO训练、第二阶段MSR-VTT适配）、结果分析与消融实验（队列消融、参数放置对比、损失消融、帧采样策略对比）、性能调优（混合精度训练、内存优化、训练超参数调优）、论文撰写与修订。
 
-\textbf{张思远：}负责方法设计（LoRA适配策略、非对称队列机制、Stack LoRA领域迁移）、实验实施（第一阶段COCO训练、第二阶段MSR-VTT适配）、结果分析与消融实验（队列消融、参数放置对比、损失消融、帧采样策略对比）、性能调优（混合精度训练、内存优化、训练超参数调优）、论文撰写与修订。
-
-\textbf{程亚迪：}提出文本-视频检索的主题思想，负责前端代码构建（数据集加载与预处理流水线、Flickr30k/\linebreak[0]MSVD评估流水线、可视化界面）、后端代码构建（训练循环与优化器配置、对比队列管理、模型定义与LoRA注入）、系统测试、PPT制作。
+程亚迪提出文本-视频检索的主题思想，负责前端代码构建（数据集加载与预处理流水线、Flickr30k/\linebreak[0]MSVD评估流水线、可视化界面）、后端代码构建（训练循环与优化器配置、对比队列管理、模型定义与LoRA注入）、系统测试、答辩幻灯片制作。
 
 \bigskip
 
 \section*{致谢}
 
-作者感谢Jie Lei在本项目中的指导与有益讨论。本工作作为浙江工业大学Python应用开发基础课程设计完成。
+作者感谢指导老师雷杰在本项目中的指导与有益讨论。本工作作为浙江工业大学Python应用开发基础课程设计完成。
+
+\clearpage
+\section*{附录}
+
+\subsection*{多语言检索界面实例}
+
+我们使用前述的Gradio Web界面在MSVD数据集的所有视频上进行了多语言推理演示。两个实例均使用多语言BERT（bert-base-multilingual-cased）作为文本编码器，模型仅使用英文COCO描述进行训练，推理时输入中文查询，以验证零样本跨语言检索能力。
+
+图\ref{fig:appendix1}展示了查询"一个人 lifting 汽车"的检索结果。模型正确检索到了人抬起汽车的视频片段——英文词"lifting"在共享嵌入空间中与抬起动作的视觉特征匹配，中文词"人"和"汽车"则分别匹配对应实体。
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/appendix1.png}
+\caption{多语言检索实例：查询"一个人 lifting 汽车"。模型检索到人抬起汽车的视频片段，展示了中英文混合查询下跨语言词汇的联合匹配能力。}
+\label{fig:appendix1}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/appendix2.png}
+\caption{多语言检索实例：查询"一个人汽车"。模型检索到一个人驾驶汽车的视频片段。结合图\ref{fig:appendix1}，加入英文词"lifting"后检索结果切换为抬起汽车，展示了模型对中英文混合查询的灵活处理能力。}
+\label{fig:appendix2}
+\end{figure}
+
+图\ref{fig:appendix2}展示了查询"一个人汽车"的检索结果。模型检索到一个人驾驶汽车的视频片段——中文词"人"与"汽车"在共享嵌入空间中分别匹配了视频中的人物与车辆实体。两幅图共同证明了多语言BERT的跨语言灵活性——模型仅使用英文描述训练，就能在共享嵌入空间中同时处理中英文词汇，将它们组合为统一的检索语义。这种能力使得用户可以使用母语描述实体、用英文补充关键词，系统仍能正确理解检索意图。
+
+这两组结果展示了我们框架在实际部署环境中的可用性（通过Gradio Web界面直接在浏览器中进行多语言视频检索），同时验证了多语言BERT在零样本跨语言检索中的实际潜力：模型仅使用英文描述训练，却能处理中英文混合查询，将不同语言的词汇在共享嵌入空间中组合为一致的检索语义。这种跨语言灵活性表明，即使缺少目标语言的多模态训练数据，通过冻结CLIP视觉编码器与可训练的BERT文本编码器之间的跨模态对齐，多语言BERT仍然能够实现有意义的零样本跨语言检索。
+
+\subsection*{超参数说明}
+
+我们评估了$\alpha \in \{0.25, 0.50, 0.75\}$。尽管$\alpha{=}0.50$已经达到了可比的性能，但$\alpha{=}0.75$产生了最高的t2i R@1，因此被最终模型采用。表\ref{tab:hyperparams}总结了本框架使用的关键超参数。所有实验使用在COCO描述上训练的LoRA秩$r=8$，种子为42。
+
+\begin{table}[htbp]
+\centering
+\caption{关键超参数。CLIP ViT-B/32（OpenAI）基线：t2i R@1~57.90\%，i2t R@1~76.90\%。}
+\label{tab:hyperparams}
+\begin{tabular}{lcc}
+\toprule
+超参数 & 值 & 描述 \\
+\midrule
+批量大小 & 128 & 8 GB VRAM下最大 \\
+学习率 & $3\times10^{-4}$ & AdamW，余弦衰减 \\
+权重衰减 & 0.01 & \\
+预热步数 & 34,536 & 线性预热 \\
+训练轮数 & 30 & \\
+\midrule
+LoRA秩 $r$ & 8 & \\
+LoRA $\alpha$ & 16 & \\
+LoRA dropout & 0.1 & \\
+LoRA目标 & Q, K, V, O & BERT线性层 \\
+\midrule
+队列大小 & 49,152 & FIFO对比队列 \\
+t2i权重 $\alpha$ & 0.75 & 式\ref{eq:asymmetric_loss} \\
+温度 $\tau$ 初始值 & $1/0.07$ & 可学习 $\tau=\exp(\gamma)$ \\
+\midrule
+AMP & true & 混合精度训练 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \bigskip
 
@@ -501,8 +558,8 @@ P.~Young, A.~Lai, M.~Hodosh, and J.~Hockenmaier.
 \newblock From image descriptions to visual denotations: New similarity metrics for semantic inference over event descriptions.
 \newblock \textit{Transactions of the Association for Computational Linguistics}, 2:67--78, 2014.
 
-\bibitem[Lin et al.(2014)Lin, Maire, Belongie, Hays, Perona, Ramanan, Dollár, and Zitnick]{lin2014coco}
-T.-Y.~Lin, M.~Maire, S.~Belongie, J.~Hays, P.~Perona, D.~Ramanan, P.~Dollár, and C.~L.~Zitnick.
+\bibitem[Lin et al.(2014)Lin, Maire, Belongie, Bourdev, Girshick, Hays, Perona, Ramanan, Dollár, and Zitnick]{lin2014coco}
+T.-Y.~Lin, M.~Maire, S.~Belongie, L.~Bourdev, R.~Girshick, J.~Hays, P.~Perona, D.~Ramanan, P.~Dollár, and C.~L.~Zitnick.
 \newblock Microsoft COCO: Common objects in context.
 \newblock In \textit{ECCV}, 2014.
 
@@ -521,8 +578,8 @@ X.~Zhai, B.~Mustafa, A.~Kolesnikov, and L.~Beyer.
 \newblock Sigmoid loss for language image pre-training.
 \newblock In \textit{ICCV}, 2023.
 
-\bibitem[Sharma et al.(2018)Sharma, Ding, and Soricut]{sharma2018conceptual}
-P.~Sharma, N.~Ding, and R.~Soricut.
+\bibitem[Sharma et al.(2018)Sharma, Ding, Goodman, and Soricut]{sharma2018conceptual}
+P.~Sharma, N.~Ding, S.~Goodman, and R.~Soricut.
 \newblock Conceptual captions: A cleaned, hypernymed, image alt-text dataset for automatic image captioning.
 \newblock In \textit{ACL}, 2018.
 
@@ -551,6 +608,11 @@ J.~Lei, L.~Li, L.~Zhou, Z.~Gan, T.~L.~Berg, M.~Bansal, and J.~Liu.
 \newblock Less is more: ClipBERT for video-and-language learning via sparse sampling.
 \newblock In \textit{CVPR}, 2021.
 
+\bibitem[Paul et al.(2018)Paul, Kavitha, and Rani]{asha2018keyframe}
+M.~K.~Asha Paul, J.~Kavitha, and P.~A.~Jansi Rani.
+\newblock Key-frame extraction techniques: A review.
+\newblock \textit{Recent Patents on Computer Science}, 11(1):3--16, 2018.
+
 \bibitem[Gorti et al.(2022)Gorti, Vouitsis, Ma, Golestan, Volkovs, Garg, and Yu]{gorti2022xpool}
 S.~K.~Gorti, N.~Vouitsis, J.~Ma, K.~Golestan, M.~Volkovs, A.~Garg, and G.~Yu.
 \newblock X-pool: Cross-modal language-video attention for text-video retrieval.
@@ -577,7 +639,7 @@ D.~Chen and W.~Dolan.
 \newblock In \textit{ACL}, 2011.
 
 \bibitem[Chatlatanagulchai et al.(2025)Chatlatanagulchai, Thonglek, Reid, Kashiwa, Leelaprute, Rungsawang, Manaskasemsak, and Iida]{claudecode2025}
-K.~Chatlatanagulchai, K.~Thonglek, I.~Reid, K.~Kashiwa, P.~Leelaprute, A.~Rungsawang, B.~Manaskasemsak, and H.~Iida.
+K.~Chatlatanagulchai, K.~Thonglek, B.~Reid, Y.~Kashiwa, P.~Leelaprute, A.~Rungsawang, B.~Manaskasemsak, and H.~Iida.
 \newblock On the use of agentic coding manifests: An empirical study of Claude Code.
 \newblock \textit{arXiv preprint arXiv:2509.14744}, 2025.
 
@@ -588,37 +650,5 @@ DeepSeek-AI.
 \newblock Available at \url{https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro}.
 
 \end{thebibliography}
-
-\section{超参数选择}
-
-我们评估了$\alpha \in \{0.25, 0.50, 0.75\}$。尽管$\alpha{=}0.50$已经达到了可比的性能，但$\alpha{=}0.75$产生了最高的t2i R@1，因此被最终模型采用。表\ref{tab:hyperparams}总结了本框架使用的关键超参数。所有实验使用在COCO描述上训练的LoRA秩$r=8$，种子为42。
-
-\begin{table}[h]
-\centering
-\caption{关键超参数。CLIP ViT-B/32（OpenAI）基线：t2i R@1~57.90\%，i2t R@1~76.90\%。}
-\label{tab:hyperparams}
-\begin{tabular}{lcc}
-\toprule
-超参数 & 值 & 描述 \\
-\midrule
-批量大小 & 128 & 8 GB VRAM下最大 \\
-学习率 & $3\times10^{-4}$ & AdamW，余弦衰减 \\
-权重衰减 & 0.01 & \\
-预热步数 & 34,536 & 线性预热 \\
-训练轮数 & 30 & \\
-\midrule
-LoRA秩 $r$ & 8 & \\
-LoRA $\alpha$ & 16 & \\
-LoRA dropout & 0.1 & \\
-LoRA目标 & Q, K, V, O & BERT线性层 \\
-\midrule
-队列大小 & 49,152 & FIFO对比队列 \\
-t2i权重 $\alpha$ & 0.75 & 式\ref{eq:asymmetric_loss} \\
-温度 $\tau$ 初始值 & $1/0.07$ & 可学习 $\tau=\exp(\gamma)$ \\
-\midrule
-AMP & true & 混合精度训练 \\
-\bottomrule
-\end{tabular}
-\end{table}
 
 \end{document}
