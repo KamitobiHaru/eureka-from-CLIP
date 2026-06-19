@@ -342,7 +342,6 @@ Opens a browser UI with two tabs:
 │   ├── evaluate_clip_text_encoder.py # CLIP zero-shot baseline on Flickr30k
 │   ├── evaluate_multilingual.py      # Bilingual Flickr30k eval
 │   ├── segment_video.py              # CLI: video → scene segmentation
-│   ├── download_clip_model.py        # Download LAION CLIP via HuggingFace
 │   ├── download_openai_clip.py       # Download OpenAI CLIP via modelscope + HF conversion
 │   └── convert_hf_to_openclip.py     # Convert HF Transformers CLIP → open_clip safetensors
 ├── config/
@@ -368,7 +367,6 @@ models/
 ├── clip/                             # Legacy OpenAI CLIP checkpoints
 │   ├── openai_open_clip_model.safetensors
 │   └── openai_pytorch_model.bin
-├── deprecated_laion_clip/            # LAION-2B CLIP (deprecated, not used)
 ├── lama/                             # LaMa image inpainting model (motion sequences)
 ├── yolo26x-seg.pt                    # YOLO segmentation model (motion sequences)
 └── hy-mt-1.8b/                       # Hy machine translation model (multilingual data pipeline)

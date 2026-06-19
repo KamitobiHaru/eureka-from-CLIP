@@ -822,8 +822,8 @@ def main():
 
     print("Loading CLIP encoder...")
     from clip_search.encoder import CLIPEncoder
-    clip_model = cfg.get("clip", {}).get("model", "laion")
-    clip_encoder = CLIPEncoder(model_type=clip_model, device=device)
+    clip_model = cfg.get("clip", {}).get("model", "openai")
+    clip_encoder = CLIPEncoder(device=device)
 
     # ── Load COCO annotations ─────────────────────────────────────
     for split in ("train2017", "val2017"):

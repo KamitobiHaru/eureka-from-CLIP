@@ -14,9 +14,7 @@ flickr:
   train_on: false
 
 clip:
-  # Which CLIP model variant to use for vision embeddings.
-  #   laion  — open_clip ViT-B/32 trained on LAION-2B (stronger, current default)
-  #   openai — OpenAI's original ViT-B/32 trained on WIT-400M
+  # OpenAI CLIP ViT-B/32 trained on WIT-400M
   model: openai
 
 # Chinese Flickr30k evaluation (cross-lingual transfer)

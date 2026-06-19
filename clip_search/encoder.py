@@ -6,12 +6,7 @@ import open_clip
 
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-# ── Checkpoint paths per model type ─────────────────────────────
-_LAION_CKPT_CANDIDATES = [
-    os.path.join(_PROJECT_ROOT, "models", "deprecated_laion_clip", "open_clip_model.safetensors"),
-    os.path.join(_PROJECT_ROOT, "models", "deprecated_laion_clip", "open_clip_pytorch_model.bin"),
-]
-
+# ── Checkpoint paths for OpenAI CLIP ViT-B/32 ─────────────────────
 _OPENAI_CKPT_CANDIDATES = [
     # HF clone (converted) — preferred source
     os.path.join(_PROJECT_ROOT, "models", "clip-vit-base-patch32", "open_clip_model.safetensors"),
@@ -21,43 +16,37 @@ _OPENAI_CKPT_CANDIDATES = [
 ]
 
 
-def _find_checkpoint(model_type: str = "openai") -> str | None:
-    """Return the first existing checkpoint path for the given model type."""
-    candidates = _OPENAI_CKPT_CANDIDATES if model_type == "openai" else _LAION_CKPT_CANDIDATES
-    for p in candidates:
+def _find_checkpoint() -> str | None:
+    """Return the first existing checkpoint path for OpenAI CLIP ViT-B/32."""
+    for p in _OPENAI_CKPT_CANDIDATES:
         if os.path.exists(p):
             return p
     return None
 
 
 class CLIPEncoder:
-    """Wrapper around open_clip ViT-B/32 for encoding scenes and text queries."""
+    """Wrapper around open_clip ViT-B/32 (OpenAI WIT-400M) for encoding scenes and text queries."""
 
-    def __init__(self, model_type: str = "openai", model_path: str = None, device: str = None):
-        """Wrapper around open_clip ViT-B/32.
+    def __init__(self, model_path: str = None, device: str = None):
+        """Wrapper around OpenAI CLIP ViT-B/32.
 
         Args:
-            model_type: ``"laion"`` (default, LAION-2B trained) or ``"openai"`` (original WIT-400M).
-            model_path: Optional explicit path to a checkpoint.  If omitted, auto-detected
-                        from ``model_type``.
+            model_path: Optional explicit path to a checkpoint.  Otherwise auto-detected.
             device: Torch device (auto-detected if None).
         """
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = torch.device(device)
 
-        ckpt = model_path or _find_checkpoint(model_type)
-        self.model_type = model_type
+        ckpt = model_path or _find_checkpoint()
 
-        # ── Load model ───────────────────────────────────────────
         # open_clip supports passing a local file path directly as pretrained.
-        # For "openai" without a local file, we fall back to the built-in
-        # download (which fetches from GitHub Releases).
-        if ckpt is None and model_type == "openai":
+        # Without a local file, it falls back to the built-in download from GitHub Releases.
+        if ckpt is None:
             print("No local OpenAI checkpoint found. Downloading from open_clip hub...")
             pretrained = "openai"
         else:
-            pretrained = ckpt if ckpt else ""
+            pretrained = ckpt
 
         self.model, _, self.preprocess = open_clip.create_model_and_transforms(
             "ViT-B-32",

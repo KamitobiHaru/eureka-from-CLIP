@@ -1,4 +1,4 @@
-"""Frozen CLIP text encoder (ViT-B-32) as a trainable-compatible nn.Module.
+"""Frozen CLIP text encoder (ViT-B-32, OpenAI WIT-400M) as a trainable-compatible nn.Module.
 
 Wraps ``open_clip`` text encoder.  **Always frozen** — no gradients flow
 through this module.  Output is 512-dim L2-normalised, compatible with
@@ -23,11 +23,6 @@ import torch.nn.functional as F
 
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-# Separate checkpoint paths per model type (matching clip_search/encoder.py)
-_LAION_CKPT_CANDIDATES = [
-    os.path.join(_PROJECT_ROOT, "models", "deprecated_laion_clip", "open_clip_model.safetensors"),
-    os.path.join(_PROJECT_ROOT, "models", "deprecated_laion_clip", "open_clip_pytorch_model.bin"),
-]
 _OPENAI_CKPT_CANDIDATES = [
     # HF clone (converted) — preferred source
     os.path.join(_PROJECT_ROOT, "models", "clip-vit-base-patch32", "open_clip_model.safetensors"),
@@ -37,17 +32,16 @@ _OPENAI_CKPT_CANDIDATES = [
 ]
 
 
-def _find_clip_checkpoint(model_type: str = "openai") -> str | None:
-    """Return the first existing checkpoint path for the given model type."""
-    candidates = _OPENAI_CKPT_CANDIDATES if model_type == "openai" else _LAION_CKPT_CANDIDATES
-    for p in candidates:
+def _find_clip_checkpoint() -> str | None:
+    """Return the first existing checkpoint path for OpenAI CLIP ViT-B/32."""
+    for p in _OPENAI_CKPT_CANDIDATES:
         if os.path.exists(p):
             return p
     return None
 
 
 class CLIPTextEncoder(nn.Module):
-    """CLIP text encoder (ViT-B-32 from open_clip), optionally trainable via LoRA.
+    """CLIP text encoder (ViT-B-32 from open_clip, OpenAI WIT-400M), optionally trainable via LoRA.
 
     Input:  ``[B, T]`` token IDs (from ``open_clip.get_tokenizer("ViT-B-32")``)
     Output: ``[B, 512]`` L2-normalised text embeddings
@@ -60,14 +54,13 @@ class CLIPTextEncoder(nn.Module):
         self,
         device: torch.device | None = None,
         lora_cfg: Optional[Dict[str, Any]] = None,
-        model_type: str = "openai",
     ):
         super().__init__()
         import open_clip
 
-        ckpt = _find_clip_checkpoint(model_type)
+        ckpt = _find_clip_checkpoint()
         if ckpt is None:
-            print(f"[CLIPTextEncoder] No local checkpoint for '{model_type}', using random init.")
+            print("[CLIPTextEncoder] No local checkpoint found, using random init.")
 
         model, _, _ = open_clip.create_model_and_transforms(
             "ViT-B-32",

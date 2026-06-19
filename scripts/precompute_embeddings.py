@@ -57,7 +57,7 @@ def main():
 
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
-    clip_model = cfg.get("clip", {}).get("model", "laion")
+    clip_model = cfg.get("clip", {}).get("model", "openai")
 
     coco_root = Path(cfg["data"]["coco_root"])
     split_dir = coco_root / args.split

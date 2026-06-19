@@ -89,7 +89,7 @@ def main():
 
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
-    clip_model = cfg.get("clip", {}).get("model", "laion")
+    clip_model = cfg.get("clip", {}).get("model", "openai")
 
     flickr_cfg = cfg.get("flickr", {})
     if not flickr_cfg:

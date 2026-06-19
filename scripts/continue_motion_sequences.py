@@ -196,8 +196,8 @@ def main():
     lama_model.eval()
     print("  Loading CLIP encoder...")
     from clip_search.encoder import CLIPEncoder
-    clip_model = cfg.get("clip", {}).get("model", "laion")
-    clip_encoder = CLIPEncoder(model_type=clip_model, device=device)
+    clip_model = cfg.get("clip", {}).get("model", "openai")
+    clip_encoder = CLIPEncoder(device=device)
 
     # ── Val motion sequences (sequential) ─────────────────────────
     val_next_id = 0

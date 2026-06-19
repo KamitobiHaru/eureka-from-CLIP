@@ -40,7 +40,7 @@ def main():
 
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
-    clip_model = cfg.get("clip", {}).get("model", "laion")
+    clip_model = cfg.get("clip", {}).get("model", "openai")
 
     flickr_cfg = cfg.get("flickr", {})
     flickr_root = Path(flickr_cfg["root"])
@@ -49,12 +49,12 @@ def main():
     print(f"Device: {device}")
 
     # ── Load CLIP model ──────────────────────────────────────
-    ckpt = _find_checkpoint(clip_model)
+    ckpt = _find_checkpoint()
     if ckpt:
-        print(f"Loading open_clip ViT-B/32 ({clip_model}) from: {ckpt}")
+        print(f"Loading OpenAI CLIP ViT-B/32 from: {ckpt}")
     else:
-        print(f"No local checkpoint for '{clip_model}'. Using open_clip default.")
-    encoder = CLIPEncoder(model_type=clip_model, device=device)
+        print("No local checkpoint found. Using open_clip default.")
+    encoder = CLIPEncoder(device=device)
 
     # ── Parse test annotations ───────────────────────────────
     print(f"\nParsing: {ann_file}")
